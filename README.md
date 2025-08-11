@@ -33,6 +33,7 @@ rm -rf env
 
 # 2. Front
 ```
+nvm use
 node -v
 > v20.x.x
 ```
