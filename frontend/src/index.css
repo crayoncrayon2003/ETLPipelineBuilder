@@ -1,0 +1,65 @@
+/* src/index.css */
+
+/* Basic Resets and Global Styles */
+body, html, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  /* This is a key part: prevent the entire page from scrolling */
+  overflow: hidden; 
+}
+
+/* 
+  Main Application Container 
+  - Takes up the full viewport height (100vh).
+  - Arranges children (header, main content) in a vertical column.
+*/
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* 
+  Header Section 
+  - Has a fixed height and does not shrink.
+*/
+.app-header {
+  padding: 10px 20px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0; /* Prevents the header from shrinking if content grows */
+  background-color: white;
+  z-index: 10; /* Ensures the header stays on top of other content */
+}
+
+.app-header h1 {
+  font-size: 24px;
+  margin: 0;
+}
+
+.app-header button {
+  font-size: 16px;
+  padding: 10px 20px;
+  cursor: pointer;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  background-color: #f0f0f0;
+}
+
+/* 
+  Main Content Area 
+  - This container holds the three columns (PluginSidebar, FlowCanvas, ParamsSidebar).
+  - It's a flex container that arranges its children horizontally.
+  - `flex-grow: 1` makes it take up all available vertical space left by the header.
+  - `min-height: 0` is a flexbox trick to make child scrolling work correctly.
+*/
+.main-content {
+  display: flex;
+  flex-grow: 1;
+  min-height: 0; 
+}

@@ -1,0 +1,85 @@
+@startuml ETL Framework Frontend - Component Diagram
+
+!theme plain
+skinparam componentStyle uml2
+skinparam defaultFontName "Segoe UI", "Helvetica", "Arial"
+skinparam component {
+    BackgroundColor LightYellow
+    BorderColor Navy
+    ArrowColor Navy
+}
+skinparam interface {
+    BackgroundColor LightPink
+    BorderColor Firebrick
+}
+
+' #############################################
+' ###         EXTERNAL SYSTEMS              ###
+' #############################################
+actor User
+interface "Backend API" as BackendApi
+
+' #############################################
+' ###      MAIN APPLICATION COMPONENTS        ###
+' #############################################
+package "Frontend Application (React)" {
+
+    component "App.jsx" as App {
+        component "Header"
+    }
+
+    package "Main Content Area" {
+        component "PluginSidebar.jsx" as Sidebar
+        component "FlowCanvas.jsx" as Canvas
+        component "ParamsSidebar.jsx" as Params
+    }
+
+    package "State Management (Zustand)" {
+        component "useFlowStore.js" as FlowStore
+    }
+
+    package "API Client" {
+        component "apiClient.js" as ApiClient
+    }
+
+    package "Desktop Integration (Electron)" {
+        interface "window.electronAPI" as ElectronApi
+    }
+}
+
+
+' #############################################
+' ###            RELATIONSHIPS              ###
+' #############################################
+
+' --- User Interaction Flow ---
+User --|> App : interacts with
+App --down-> Header : contains
+App --down-> "Main Content Area" : contains
+
+' --- API Communication Flow ---
+Sidebar ..> ApiClient : fetches plugins
+ApiClient ..> BackendApi : GET /plugins
+Header ..> ApiClient : on "Run" click
+ApiClient ..> BackendApi : POST /pipelines/run
+
+' --- State Management Flow ---
+' The store is the single source of truth for nodes and edges
+FlowStore --up-> Canvas : provides nodes, edges, callbacks
+FlowStore --up-> Params : provides selected node info
+FlowStore --up-> Header : provides data for run payload
+
+' Components update the store
+Canvas ..> FlowStore : onNodesChange, onEdgesChange, onConnect, addNode
+Params ..> FlowStore : updateNodeParams
+
+' --- Canvas and Sidebar Interaction ---
+Sidebar ..> Canvas : Drag & Drop plugin info
+Canvas ..> Params : onNodeClick -> updates selectedNodeId in store
+
+' --- Desktop (Electron) Integration Flow ---
+Params ..> ElectronApi : calls openFileDialog()
+ElectronApi ..> "Electron Main Process" : IPC message
+"Electron Main Process" ..> ElectronApi : returns file path
+
+@enduml

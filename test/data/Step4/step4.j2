@@ -1,0 +1,25 @@
+{# ngsi_template.j2 #}
+{# This template creates a single NGSI-LD compliant entity. #}
+{
+    "id": "urn:ngsi-ld:Device:{{ device_id }}",
+    "type": "Device",
+    "temperature": {
+        "type": "Property",
+        "value": {{ temperature }},
+        "observedAt": "{{ measured_at }}"
+    },
+    "location": {
+        "type": "GeoProperty",
+        "value": {
+            "type": "Point",
+            "coordinates": [
+                {{ longitude }},
+                {{ latitude }}
+            ]
+        }
+    },
+    "@context": [
+        "https://schema.lab.fiware.jp/ld/context",
+        "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+}

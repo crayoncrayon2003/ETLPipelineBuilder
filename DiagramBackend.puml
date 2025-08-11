@@ -1,0 +1,83 @@
+@startuml ETL Framework Backend - Final Architecture (Syntax Corrected)
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam defaultFontName "Segoe UI", "Helvetica", "Arial"
+skinparam package {
+    BackgroundColor LightBlue
+    BorderColor RoyalBlue
+}
+skinparam class {
+    BackgroundColor LightYellow
+    ArrowColor Navy
+    BorderColor Navy
+}
+skinparam stereotype {
+    BackgroundColor Peru
+    FontColor white
+}
+
+' #############################################
+' ###      ENTRY POINTS & CORE              ###
+' #############################################
+
+package "Entry Points" {
+    class "Frontend GUI" as Frontend
+    class "Manual Execution\n(etl_flow.py)" as ManualFlow
+}
+
+package "backend.api" {
+    class "main.py" as FastApiApp
+    class "pipelines_router.py" as PipelinesRouter
+    class "pipeline_service.py" as PipelineService
+}
+
+package "backend.core" {
+    class StepExecutor
+    class FrameworkManager <<singleton>>
+    class EtlHookSpecs <<HookSpec>>
+    class DataContainer
+}
+
+' #############################################
+' ###              PLUGINS                  ###
+' #############################################
+
+package "backend.plugins" {
+    package "extractors" {
+        class from_http
+    }
+    package "transformers" {
+        class with_duckdb
+    }
+    ' ... other plugins ...
+}
+
+' #############################################
+' ###            RELATIONSHIPS              ###
+' #############################################
+
+' --- Top Level Flow ---
+Frontend ..> FastApiApp : HTTP Request
+ManualFlow ..> StepExecutor : uses directly
+
+' --- API Layer Flow ---
+FastApiApp ..> PipelinesRouter
+PipelinesRouter ..> PipelineService
+
+' --- Core Logic Flow ---
+PipelineService ..> StepExecutor : (via Prefect task)
+StepExecutor ..> FrameworkManager : uses singleton
+
+' FrameworkManager discovers all classes within the 'backend.plugins' package
+FrameworkManager ..> backend.plugins : discovers & caches
+
+' Each concrete plugin class implements the hook specification
+backend.plugins.extractors.from_http ..|> EtlHookSpecs : implements
+backend.plugins.transformers.with_duckdb ..|> EtlHookSpecs : implements
+
+' --- Data and Execution Flow ---
+StepExecutor ..> "Plugin Instances" : calls execute_plugin()
+"Plugin Instances" ..> DataContainer : create or consume
+
+@enduml
