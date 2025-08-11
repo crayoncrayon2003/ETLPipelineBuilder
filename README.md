@@ -1,6 +1,7 @@
 # 1. buckend
 # 1.1. install
 ```
+cd backend
 python3.12 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
@@ -10,7 +11,7 @@ pip install -e .
 
 # 1.2. run
 ```
-uvicorn backend.api.main:app --reload
+uvicorn api.main:app --reload
 ```
 
 check swagger
