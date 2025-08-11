@@ -1,7 +1,6 @@
 # 1. buckend
 # 1.1. install
 ```
-cd buckend
 python3.12 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
