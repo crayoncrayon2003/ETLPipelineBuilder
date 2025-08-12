@@ -1,5 +1,3 @@
-# backend/plugins/cleansing/format_detector.py
-
 import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -12,9 +10,6 @@ from core.data_container.formats import SupportedFormats
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class FormatDetector:
-    """
-    (File-based) Detects the format of a file and passes the path through.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "format_detector"
@@ -85,7 +80,6 @@ class FormatDetector:
         detected_format = self._detect_format(input_path, read_chunk_size)
         print(f" -> Detected format: {detected_format.value}")
 
-        # This plugin is non-destructive, so copy the source file to the output path.
         output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(input_path, output_path)
 

@@ -1,5 +1,3 @@
-# backend/plugins/validators/data_quality.py
-
 import pandas as pd
 from typing import Dict, Any, List, Optional
 import pluggy
@@ -11,9 +9,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DataQualityValidator:
-    """
-    (File-based) Performs data quality checks on a file based on a set of rules.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "data_quality"

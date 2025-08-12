@@ -1,14 +1,9 @@
-# backend/api/routers/pipelines.py
-
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pathlib import Path
 
-# Import the specific Pydantic model directly from its source file.
 from api.schemas.pipeline import PipelineDefinition
 from api.services import pipeline_service
 
-# The project root is now determined and passed in from the service layer,
-# making the router more self-contained.
 project_root = Path(__file__).resolve().parents[3]
 
 router = APIRouter(

@@ -1,5 +1,3 @@
-# backend/core/config/loader.py
-
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional

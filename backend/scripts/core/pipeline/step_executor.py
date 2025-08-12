@@ -1,5 +1,3 @@
-# backend/core/pipeline/step_executor.py
-
 from typing import Dict, Any, Optional
 
 from ..plugin_manager.manager import framework_manager
@@ -34,9 +32,6 @@ class StepExecutor:
             if inputs:
                 for input_name, container in inputs.items():
                     if container:
-                        # Convention:
-                        # inputs={'input_data': ...} -> params['input_path'] = ...
-                        # inputs={'some_key': ...}   -> params['some_key_path'] = ...
                         param_key = "input_path" if input_name == "input_data" else f"{input_name}_path"
 
                         file_paths = container.get_file_paths()
@@ -46,11 +41,10 @@ class StepExecutor:
                         elif len(file_paths) > 1:
                             resolved_params[param_key] = file_paths
 
-            # The plugin receives a params dict with all paths resolved.
             output_container = framework_manager.call_plugin_execute(
                 plugin_name=plugin_name,
                 params=resolved_params,
-                inputs=inputs or {} # Pass original inputs for metadata access etc.
+                inputs=inputs or {}
             )
 
             print(f"  Step '{step_name}' completed.")

@@ -1,5 +1,3 @@
-# backend/plugins/loaders/to_scp.py
-
 import paramiko
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class ScpLoader:
-    """
-    (File-based) Loads (uploads) a local file to a remote server using SCP.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "to_scp"

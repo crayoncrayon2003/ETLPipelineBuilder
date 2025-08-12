@@ -1,5 +1,3 @@
-# backend/plugins/extractors/from_scp.py
-
 import paramiko
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class ScpExtractor:
-    """
-    Downloads a file from a remote server via SCP and saves it locally.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_scp"

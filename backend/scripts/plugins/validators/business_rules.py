@@ -1,5 +1,3 @@
-# backend/plugins/validators/business_rules.py
-
 from typing import Dict, Any, List, Optional
 import pluggy
 import pandas as pd
@@ -11,9 +9,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class BusinessRulesValidator:
-    """
-    (File-based) Validates a file against a set of custom business rules.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "business_rules"

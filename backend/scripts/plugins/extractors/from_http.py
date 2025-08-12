@@ -1,5 +1,3 @@
-# backend/plugins/extractors/from_http.py
-
 import requests
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -11,10 +9,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class HttpExtractor:
-    """
-    Downloads a file from an HTTP(S) source and saves it locally,
-    preserving its original format.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_http"

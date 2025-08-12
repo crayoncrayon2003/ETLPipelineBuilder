@@ -1,5 +1,3 @@
-# backend/core/data_container/formats.py
-
 from enum import Enum, auto
 
 class SupportedFormats(Enum):
@@ -11,31 +9,20 @@ class SupportedFormats(Enum):
     It provides a single source of truth for all supported formats.
     """
 
-    # --- Standard File Formats ---
     CSV = 'csv'
     JSON = 'json'
     PARQUET = 'parquet'
     XML = 'xml'
-
-    # --- Geospatial Formats ---
     SHAPEFILE = 'shapefile'
     GEOJSON = 'geojson'
-
-    # --- Transport/Specification Formats ---
     GTFS = 'gtfs'
     GTFS_RT = 'gtfs-rt'
     NGSI = 'ngsi'
     NGSI_LD = 'ngsi-ld'
-
-    # --- In-memory Representations ---
     PANDAS_DATAFRAME = 'dataframe'
-
-    # --- Archive Formats ---
     ZIP = 'zip'
     GZIP = 'gzip'
     TAR = 'tar'
-
-    # --- Generic/Unknown ---
     FILE = 'file' # Represents a generic, unprocessed file
     TEXT = 'text' # Represents plain text content
     BINARY = 'binary' # Represents raw binary data

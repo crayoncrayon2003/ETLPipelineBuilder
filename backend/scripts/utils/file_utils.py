@@ -1,5 +1,3 @@
-# backend/utils/file_utils.py
-
 from pathlib import Path
 
 def ensure_directory_exists(dir_path: str | Path) -> Path:
@@ -35,19 +33,19 @@ def get_project_root() -> Path:
 
     Returns:
         Path: The absolute path to the project root directory.
-    
+
     Raises:
         FileNotFoundError: If the project root marker cannot be found.
     """
     # Start from the current file's directory and traverse upwards
     current_path = Path(__file__).resolve()
     # A common marker for a project root is the .git directory or a setup.py file
-    project_root_marker = ".git" 
+    project_root_marker = ".git"
 
     for parent in current_path.parents:
         if (parent / project_root_marker).exists():
             return parent
-            
+
     raise FileNotFoundError(
         f"Could not find project root. "
         f"Searched for a directory containing '{project_root_marker}'."
@@ -61,7 +59,7 @@ def get_project_root() -> Path:
 #     print(f"Ensuring directory exists: {temp_dir}")
 #     ensure_directory_exists(temp_dir)
 #     print(f"Directory exists: {temp_dir.exists()}")
-#     
+#
 #     # Clean up the dummy directory
 #     import shutil
 #     shutil.rmtree("./temp_test_dir")

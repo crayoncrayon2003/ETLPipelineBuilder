@@ -1,5 +1,3 @@
-# backend/plugins/transformers/with_duckdb.py
-
 import duckdb
 from typing import Dict, Any, Optional
 import pluggy
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DuckDBTransformer:
-    """
-    (File-based) Transforms data in a file using a SQL query powered by DuckDB.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "with_duckdb"
@@ -60,7 +55,6 @@ class DuckDBTransformer:
                 if not input_path.exists(): raise FileNotFoundError(f"Input file not found: {input_path}")
                 table_name = params.get("table_name", "source_data")
 
-                # --- Start of Modification: Use correct read function based on suffix ---
                 suffix = input_path.suffix.lower()
                 read_function = ""
                 if suffix == '.csv':
@@ -74,8 +68,6 @@ class DuckDBTransformer:
 
                 con.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM {read_function};")
                 print(f"Registered '{input_path.name}' as table '{table_name}'.")
-                # --- End of Modification ---
-
 
             result_df = con.execute(sql_query).fetch_df()
 
@@ -88,7 +80,6 @@ class DuckDBTransformer:
         print(f"Transformation complete. Result has {len(result_df)} rows. Saving to '{output_path}'.")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Output format is determined by the output_path suffix
         output_suffix = output_path.suffix.lower()
         if output_suffix == '.parquet':
             result_df.to_parquet(output_path, index=False)

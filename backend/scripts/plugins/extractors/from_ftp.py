@@ -1,5 +1,3 @@
-# backend/plugins/extractors/from_ftp.py
-
 import ftplib
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class FtpExtractor:
-    """
-    Downloads a file from an FTP server and saves it locally.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_ftp"

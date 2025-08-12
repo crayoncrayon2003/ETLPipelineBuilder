@@ -1,5 +1,3 @@
-# backend/utils/sql_template.py
-
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from typing import Dict, Any
@@ -21,7 +19,7 @@ def render_sql_template(
 
     Returns:
         str: The rendered, ready-to-execute SQL query string.
-    
+
     Raises:
         FileNotFoundError: If the template file does not exist.
         Exception: If there is an error during template rendering.
@@ -31,20 +29,17 @@ def render_sql_template(
     if not path.is_file():
         raise FileNotFoundError(f"SQL template file not found at: {path}")
 
-    # Set up a Jinja2 environment that loads templates from the same
-    # directory as the specified template file.
     env = Environment(
         loader=FileSystemLoader(str(path.parent)),
         trim_blocks=True,
         lstrip_blocks=True
     )
-    
+
     try:
         template = env.get_template(path.name)
         rendered_sql = template.render(context)
         return rendered_sql
     except Exception as e:
-        # Catch potential Jinja2 errors (e.g., undefined variables)
         raise Exception(f"Failed to render SQL template '{path.name}': {e}")
 
 
@@ -61,7 +56,7 @@ def render_sql_template(
 #
 # if __name__ == '__main__':
 #     from pathlib import Path
-#     
+#
 #     # Create a dummy template file for the example
 #     p = Path("./my_query.sql")
 #     p.write_text("SELECT * FROM {{ table_name }} WHERE event_date = '{{ date_filter }}'")
@@ -70,10 +65,10 @@ def render_sql_template(
 #         'table_name': 'sales_data',
 #         'date_filter': '2025-08-04'
 #     }
-#     
+#
 #     sql_query = render_sql_template('my_query.sql', params)
 #     print(sql_query)
 #     # Expected output:
 #     # SELECT * FROM sales_data WHERE event_date = '2025-08-04'
-#     
+#
 #     p.unlink() # Clean up the dummy file

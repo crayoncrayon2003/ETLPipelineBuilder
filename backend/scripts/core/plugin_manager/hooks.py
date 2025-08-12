@@ -1,12 +1,8 @@
-# backend/core/plugin_manager/hooks.py
-
 from typing import Dict, Any, Optional
 import pluggy
 
 from ..data_container.container import DataContainer
 
-# "etl_framework" という名前のフック仕様（hook specification）グループを作成
-# この名前は、後でフック実装（hook implementation）と紐付けるために使う
 hookspec = pluggy.HookspecMarker("etl_framework")
 
 class EtlHookSpecs:

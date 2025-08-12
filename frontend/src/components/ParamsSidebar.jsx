@@ -1,8 +1,6 @@
-// src/components/ParamsSidebar.jsx
 import React from 'react';
 import { useFlowStore } from '../store/useFlowStore';
 
-// --- RJSF (React JSON Schema Form) Imports ---
 import Form from '@rjsf/mui';
 import validator from '@rjsf/validator-ajv8';
 

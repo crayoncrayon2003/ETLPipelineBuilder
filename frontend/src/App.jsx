@@ -1,4 +1,3 @@
-// src/App.jsx
 import React from 'react';
 import PluginSidebar from './components/PluginSidebar';
 import FlowCanvas from './components/FlowCanvas';
@@ -41,7 +40,7 @@ function App() {
 
   return (
     <div className="app-container">
-      
+
       <header className="app-header">
         <h1>ETL Pipeline Builder</h1>
         <button onClick={handleRunPipeline}>
@@ -54,7 +53,7 @@ function App() {
         <FlowCanvas />
         <ParamsSidebar />
       </div>
-      
+
     </div>
   );
 }

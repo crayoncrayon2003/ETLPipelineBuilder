@@ -1,5 +1,3 @@
-# backend/plugins/cleansing/null_handler.py
-
 from typing import Dict, Any, Optional
 import pluggy
 import pandas as pd
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class NullHandler:
-    """
-    (Format-Preserving) Handles missing values in a tabular file.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "null_handler"

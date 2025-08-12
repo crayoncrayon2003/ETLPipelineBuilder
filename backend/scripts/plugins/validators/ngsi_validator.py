@@ -1,5 +1,3 @@
-# backend/plugins/validators/ngsi_validator.py
-
 import json
 from typing import Dict, Any, List, Optional
 import pluggy
@@ -11,9 +9,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class NgsiValidator:
-    """
-    (File-based) Validates NGSI entities in a JSON Lines file.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "ngsi_validator"

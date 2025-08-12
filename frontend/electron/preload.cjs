@@ -1,5 +1,3 @@
-// electron/preload.cjs
-
 const { contextBridge, ipcRenderer } = require('electron');
 
 console.log("--- Preload script (.cjs) is executing! ---");

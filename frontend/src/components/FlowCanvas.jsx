@@ -1,4 +1,3 @@
-// src/components/FlowCanvas.jsx
 import React, { useRef, useCallback, useMemo } from 'react';
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -10,7 +9,7 @@ const connectionRules = {
   cleanser: ['cleanser', 'transformer', 'validator', 'loader'],
   transformer: ['transformer', 'validator', 'loader'],
   validator: ['validator', 'loader'],
-  loader: [], 
+  loader: [],
 };
 
 const FlowCanvas = () => {

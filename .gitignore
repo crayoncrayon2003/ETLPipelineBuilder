@@ -1,0 +1,6 @@
+/backend/env/
+/backend/scripts/etl_framework_backend.egg-info/
+/backend/scripts/**/__pycache__/
+
+
+/frontend/node_modules/

@@ -1,11 +1,8 @@
-# backend/api/main.py
-
 import sys
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- Python Path Setup ---
 project_root = Path(__file__).resolve().parents[3]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
@@ -13,13 +10,9 @@ if str(project_root) not in sys.path:
 from api.schemas import pipeline as pipeline_schema_module
 from api.services import pipeline_service as pipeline_service_module
 
-# --- Import Routers ---
-# Now, when these routers are imported, their own `import` statements will find
-# the already-loaded modules.
 from api.routers.plugins import router as plugins_router
 from api.routers.pipelines import router as pipelines_router
 
-# --- FastAPI App Initialization ---
 app = FastAPI(
     title="ETL Framework API",
     description="An API to interact with the custom ETL framework.",
@@ -42,11 +35,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Include Routers ---
 app.include_router(plugins_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
 
-# --- Root Endpoint ---
 @app.get("/", tags=["Status"])
 async def read_root():
     """Root endpoint to check API status."""

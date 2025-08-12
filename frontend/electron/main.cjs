@@ -1,18 +1,15 @@
-// electron/main.cjs
-
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const isDev = require('electron-is-dev');
 
 function createWindow() {
-  // Create the browser window which will display the React app.
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     webPreferences: {
       // The preload script is a crucial security feature. It runs in a privileged
       // context and can safely expose a limited API to the renderer process (React app).
-      preload: path.join(__dirname, 'preload.cjs'), // <-- Ensure this points to the .cjs file
+      preload: path.join(__dirname, 'preload.cjs'),
       // Security best practices (defaults in modern Electron):
       contextIsolation: true,
       nodeIntegration: false,

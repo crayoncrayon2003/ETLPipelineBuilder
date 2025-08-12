@@ -1,5 +1,3 @@
-# backend/plugins/cleansing/duplicate_remover.py
-
 from typing import Dict, Any, Union, List, Optional
 import pluggy
 import pandas as pd
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DuplicateRemover:
-    """
-    (Format-Preserving) Removes duplicate rows from a tabular file (CSV, Excel, Parquet).
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "duplicate_remover"

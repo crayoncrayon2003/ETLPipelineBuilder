@@ -1,4 +1,3 @@
-// src/components/PluginSidebar.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import apiClient from '../api/apiClient';
 
@@ -43,7 +42,7 @@ const PluginSidebar = () => {
       borderRight: '1px solid #eee',
       padding: '15px',
       width: '250px',
-      overflowY: 'auto', // Allow vertical scrolling
+      overflowY: 'auto',
       backgroundColor: '#fcfcfc',
       flexShrink: 0
     }}>

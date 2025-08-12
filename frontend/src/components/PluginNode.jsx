@@ -1,4 +1,3 @@
-// src/components/PluginNode.jsx
 import React, { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 import { useFlowStore } from '../store/useFlowStore';
@@ -7,7 +6,7 @@ const PluginNode = ({ data, isConnectable, id }) => {
   const removeNode = useFlowStore.getState().removeNode;
 
   const handleRemoveClick = (event) => {
-    event.stopPropagation(); // Prevent the node from being selected when clicking the button
+    event.stopPropagation();
     removeNode(id);
   };
 
@@ -25,8 +24,8 @@ const PluginNode = ({ data, isConnectable, id }) => {
         fontWeight: 'bold', borderBottom: '1px solid #eee', paddingBottom: '5px', marginBottom: '8px',
       }}>
         <span>{data.label}</span>
-        <button 
-          onClick={handleRemoveClick} 
+        <button
+          onClick={handleRemoveClick}
           style={{
             border: 'none', background: 'transparent', cursor: 'pointer',
             fontSize: '18px', color: '#aaa', padding: '0 5px', lineHeight: 1,

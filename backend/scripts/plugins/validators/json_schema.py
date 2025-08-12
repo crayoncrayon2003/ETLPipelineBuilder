@@ -1,5 +1,3 @@
-# backend/plugins/validators/json_schema.py
-
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -14,9 +12,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class JsonSchemaValidator:
-    """
-    (File-based) Validates a column of JSON objects in a file against a JSON Schema.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "json_schema"

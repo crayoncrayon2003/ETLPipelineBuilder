@@ -1,5 +1,3 @@
-# backend/plugins/loaders/to_ftp.py
-
 import ftplib
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class FtpLoader:
-    """
-    (File-based) Loads (uploads) a local file to an FTP server.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "to_ftp"

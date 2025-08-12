@@ -1,10 +1,6 @@
-# backend/api/schemas/plugin.py
-
 from pydantic import BaseModel, Field
 from typing import Literal, Dict, Any
 
-# Use Literal to define a specific set of allowed string values for plugin types.
-# This provides strong typing and validation.
 PluginType = Literal["extractor", "cleanser", "transformer", "validator", "loader", "unknown"]
 
 class PluginInfo(BaseModel):

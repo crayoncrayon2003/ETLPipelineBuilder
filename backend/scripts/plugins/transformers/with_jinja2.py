@@ -1,5 +1,3 @@
-# backend/plugins/transformers/with_jinja2.py
-
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -12,11 +10,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class Jinja2Transformer:
-    """
-    (Generic Transformer) Transforms rows from a tabular file into a
-    structured text file using a Jinja2 template.
-    The template itself holds all knowledge of the output format.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "with_jinja2"
@@ -75,8 +68,6 @@ class Jinja2Transformer:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:
             for record in records:
-                # The context is simply the row from the DataFrame.
-                # The plugin has no knowledge of 'entity_type' or 'id'.
                 try:
                     rendered_string = template.render(record)
                     json_object = json.loads(rendered_string)

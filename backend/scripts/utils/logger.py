@@ -32,25 +32,19 @@ def setup_logger(
     # instance if called with the same name multiple times.
     logger = logging.getLogger(name)
     logger.setLevel(log_level)
-    
-    # Prevent adding multiple handlers if the logger is already configured
+
     if logger.hasHandlers():
         return logger
 
-    # Create a handler to direct logs to the standard output (console)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(log_level)
 
-    # Create a formatter to define the log message format
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # Set the formatter for the handler
     handler.setFormatter(formatter)
-
-    # Add the handler to the logger
     logger.addHandler(handler)
 
     return logger

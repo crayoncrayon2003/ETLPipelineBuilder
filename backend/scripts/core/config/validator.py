@@ -1,5 +1,3 @@
-# backend/core/config/validator.py
-
 from typing import Dict, Any, Type, Optional
 from pydantic import BaseModel, ValidationError
 
@@ -41,7 +39,6 @@ class ConfigValidator:
             print("Configuration validation successful.")
             return validated_config
         except ValidationError as e:
-            # The error message from Pydantic is very detailed and user-friendly.
             print(f"Configuration validation failed:\n{e}")
             return None
 

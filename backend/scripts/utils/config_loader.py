@@ -1,5 +1,3 @@
-# backend/utils/config_loader.py
-
 import yaml
 from pathlib import Path
 from typing import Dict, Any
@@ -28,11 +26,8 @@ def load_config_from_path(config_path: str | Path) -> Dict[str, Any]:
 
     try:
         with path.open('r', encoding='utf-8') as f:
-            # Use safe_load to avoid arbitrary code execution from YAML
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        # Re-raise with a more informative message
         raise yaml.YAMLError(f"Error parsing YAML file {path}: {e}")
-    
-    # Ensure that if the file is empty, we return an empty dict
+
     return config or {}

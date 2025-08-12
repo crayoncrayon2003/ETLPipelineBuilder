@@ -1,5 +1,3 @@
-# backend/plugins/cleansing/encoding_converter.py
-
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class EncodingConverter:
-    """
-    (File-based) Converts the character encoding of a text file.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "encoding_converter"

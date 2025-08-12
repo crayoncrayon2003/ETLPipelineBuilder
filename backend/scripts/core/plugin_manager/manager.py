@@ -1,5 +1,3 @@
-# backend/core/plugin_manager/manager.py
-
 import pluggy
 import pkgutil
 import importlib
@@ -18,11 +16,11 @@ class FrameworkManager:
         # pluggyのPluginManagerはフック仕様の管理にのみ使用
         self._pm = pluggy.PluginManager("etl_framework")
         self._pm.add_hookspecs(hooks.EtlHookSpecs)
-        
+
         # プラグイン名とインスタンスのマッピングを保持するキャッシュ
         self._plugin_name_cache: Dict[str, Any] = {}
-        
-        # --- プラグインの発見とインスタンス化を自前で行う ---
+
+        # プラグイン検出とインスタンス化
         self._discover_and_instantiate_plugins(plugins)
 
     def _discover_and_instantiate_plugins(self, package):
@@ -37,7 +35,7 @@ class FrameworkManager:
                 for name, obj in inspect.getmembers(module):
                     # それがクラスであり、かつ get_plugin_name メソッドを持つか？
                     if inspect.isclass(obj) and hasattr(obj, 'get_plugin_name'):
-                        # プラグインクラスを発見！
+                        # プラグインクラスを発見
                         instance = obj()
                         plugin_name = instance.get_plugin_name()
                         if plugin_name:
@@ -62,7 +60,7 @@ class FrameworkManager:
 
         if plugin_name not in self._plugin_name_cache:
             raise ValueError(f"Plugin '{plugin_name}' not found. Available: {list(self._plugin_name_cache.keys())}")
-        
+
         instance = self._plugin_name_cache[plugin_name]
         return instance.execute_plugin(params=params, inputs=inputs)
 

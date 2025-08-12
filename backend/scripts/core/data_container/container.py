@@ -1,17 +1,9 @@
-# backend/core/data_container/container.py
-
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from pathlib import Path
 
 class DataContainer:
-    """
-    A standardized container for passing data pointers between ETL steps.
-    In a file-based approach, this container primarily carries file paths.
-    The `data` attribute is used for data that is small enough to be kept in memory.
-    """
-
     def __init__(
         self,
         data: Optional[pd.DataFrame] = None,

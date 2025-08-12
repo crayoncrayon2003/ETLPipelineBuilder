@@ -1,5 +1,3 @@
-# backend/plugins/loaders/to_http.py
-
 import asyncio, aiohttp, json
 from typing import Dict, Any, List, Optional
 import pluggy
@@ -10,9 +8,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class HttpLoader:
-    """
-    (File-based) Loads data by sending lines from a file to an HTTP endpoint.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "to_http"

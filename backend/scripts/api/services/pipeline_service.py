@@ -1,5 +1,3 @@
-# backend/api/services/pipeline_service.py
-
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import re
@@ -80,5 +78,5 @@ def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root:
         nodes_map = {node.id: node for node in pipeline_def.nodes}
         for node_id in nodes_map:
             _submit_node_task(node_id, nodes_map, pipeline_def.edges, project_root)
-    
+
     dynamic_etl_flow()

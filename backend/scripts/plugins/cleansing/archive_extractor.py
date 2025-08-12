@@ -1,5 +1,3 @@
-# backend/plugins/cleansing/archive_extractor.py
-
 import zipfile
 import tarfile
 from pathlib import Path
@@ -11,9 +9,6 @@ from core.data_container.container import DataContainer
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class ArchiveExtractor:
-    """
-    (File-based) Extracts files from an archive into a destination directory.
-    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "archive_extractor"
@@ -42,7 +37,6 @@ class ArchiveExtractor:
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
         input_path = Path(params.get("input_path"))
-        # For this plugin, output_path is treated as a directory.
         output_dir = Path(params.get("output_path"))
 
         if not input_path or not output_dir:
