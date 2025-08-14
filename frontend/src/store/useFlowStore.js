@@ -21,10 +21,6 @@ export const useFlowStore = create((set, get) => ({
   activePipelineId: null,
   selectedNodeId: null,
 
-  /**
-   * Fetches the master list of plugins from the backend API and stores it.
-   * This should be called once when the application starts.
-   */
   fetchAndSetMasterPlugins: async () => {
     try {
       const response = await fetchPlugins();
@@ -32,13 +28,9 @@ export const useFlowStore = create((set, get) => ({
       console.log("Master plugin list has been fetched and stored globally.");
     } catch (error) {
       console.error("Failed to fetch master plugin list:", error);
-      set({ masterPlugins: [] }); // Ensure it's an array on failure
     }
   },
 
-  /**
-   * Adds a new, empty pipeline to the state and makes it active.
-   */
   addNewPipeline: () => {
     const newPipeline = createNewPipeline();
     set((state) => ({
@@ -49,19 +41,13 @@ export const useFlowStore = create((set, get) => ({
     return newPipeline.id;
   },
 
-  /**
-   * Loads pipeline data from a file, re-hydrates it, and adds it as a new active tab.
-   */
   loadPipeline: (pipelineDataFromFile) => {
     const masterPlugins = get().masterPlugins;
     const pluginMap = new Map(masterPlugins.map(p => [p.name, p]));
-
     if (pipelineDataFromFile.nodes) {
       pipelineDataFromFile.nodes.forEach(node => {
         const fullPluginInfo = pluginMap.get(node.plugin);
-        if (node._ui?.position) {
-          node.position = node._ui.position;
-        }
+        if (node._ui?.position) node.position = node._ui.position;
         node.data = {
           label: node.plugin,
           pluginInfo: fullPluginInfo || { name: node.plugin, type: 'unknown', parameters_schema: {} },
@@ -69,14 +55,12 @@ export const useFlowStore = create((set, get) => ({
         };
       });
     }
-
     if (pipelineDataFromFile.edges) {
       pipelineDataFromFile.edges.forEach(edge => {
         edge.source = edge.source_node_id;
         edge.target = edge.target_node_id;
       });
     }
-
     const newPipeline = { id: `pipeline-${nanoid()}`, ...pipelineDataFromFile };
     set((state) => ({
       pipelines: { ...state.pipelines, [newPipeline.id]: newPipeline },
@@ -105,16 +89,13 @@ export const useFlowStore = create((set, get) => ({
     }));
   },
 
-
   onNodesChange: (changes) => {
     const activeId = get().activePipelineId;
     if (!activeId || !get().pipelines[activeId]) return;
-
     const selectionChange = changes.find(c => c.type === 'select');
     if (selectionChange) {
       set({ selectedNodeId: selectionChange.selected ? selectionChange.id : null });
     }
-
     set((state) => ({
       pipelines: {
         ...state.pipelines,
