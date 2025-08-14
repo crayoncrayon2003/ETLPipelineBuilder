@@ -35,6 +35,7 @@ rm -rf prefect_data
 
 # 2. FrontEnd App
 ```
+cd frontend
 nvm use
 node -v
 > v20.x.x
@@ -103,5 +104,5 @@ The BuckEnd App is a pipeline framework.
 The BuckEnd App works without the FrontEnd App.
 
 ```
-(env) pyton ./backend/run_pipeline.py ./test/pipelines/pipeline.json
+(env) python ./backend/run_pipeline.py ./test/pipelines/pipeline.json
 ```
