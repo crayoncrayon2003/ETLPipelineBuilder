@@ -3,15 +3,20 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-project_root = Path(__file__).resolve().parents[3]
-if str(project_root) not in sys.path:
-    sys.path.append(str(project_root))
+# --- Python Path Setup ---
+project_root = Path(__file__).resolve().parents[2]
+scripts_path = project_root / "scripts"
+if str(scripts_path) not in sys.path:
+    sys.path.append(str(scripts_path))
 
 from api.schemas import pipeline as pipeline_schema_module
 from api.services import pipeline_service as pipeline_service_module
 
+from core.plugin_manager.manager import framework_manager
+
 from api.routers.plugins import router as plugins_router
 from api.routers.pipelines import router as pipelines_router
+from api.routers.schemas import router as schemas_router
 
 app = FastAPI(
     title="ETL Framework API",
@@ -19,14 +24,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Define the list of origins that are allowed to make cross-origin requests.
-# For development, we allow our Vite server.
-# For production, you would replace this with your actual frontend's domain.
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -37,6 +38,7 @@ app.add_middleware(
 
 app.include_router(plugins_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
+app.include_router(schemas_router, prefix="/api/v1")
 
 @app.get("/", tags=["Status"])
 async def read_root():

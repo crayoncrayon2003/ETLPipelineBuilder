@@ -15,9 +15,12 @@ try {
        * @returns {Promise<string|null>}
        */
       openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
+      savePipeline: (content, defaultName) => ipcRenderer.invoke('dialog:saveFile', content, defaultName),
+      openPipeline: () => ipcRenderer.invoke('dialog:openPipeline'),
     }
   );
   console.log("--- contextBridge.exposeInMainWorld succeeded! ---");
 } catch (error) {
   console.error("--- Error in preload script (.cjs): ---", error);
 }
+

@@ -14,4 +14,31 @@ const apiClient = axios.create({
   },
 });
 
+
+/**
+ * Fetches the list of all available plugins from the backend.
+ * @returns {Promise<Array>} A promise that resolves to the list of plugins.
+ */
+export const fetchPlugins = () => {
+  return apiClient.get('/plugins/');
+};
+
+/**
+ * Submits a pipeline definition to the backend for an immediate run.
+ * @param {object} pipelineDefinition - The pipeline definition object.
+ * @returns {Promise<object>} A promise that resolves to the API response.
+ */
+export const runPipeline = (pipelineDefinition) => {
+  return apiClient.post('/pipelines/run', pipelineDefinition);
+};
+
+/**
+ * Fetches the JSON Schema for the PipelineDefinition model.
+ * @returns {Promise<object>} A promise that resolves to the JSON Schema.
+ */
+export const fetchPipelineSchema = () => {
+  return apiClient.get('/schemas/pipeline-definition');
+};
+
+
 export default apiClient;

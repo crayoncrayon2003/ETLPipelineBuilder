@@ -1,26 +1,33 @@
-import React, { useRef, useCallback, useMemo } from 'react';
+import React, { useRef, useCallback } from 'react';
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useFlowStore } from '../store/useFlowStore';
 import PluginNode from './PluginNode';
+
+const nodeTypes = {
+  pluginNode: PluginNode,
+};
+
 
 const connectionRules = {
   extractor: ['cleanser', 'transformer', 'validator', 'loader'],
   cleanser: ['cleanser', 'transformer', 'validator', 'loader'],
   transformer: ['transformer', 'validator', 'loader'],
   validator: ['validator', 'loader'],
-  loader: [],
+  loader: [], 
 };
 
 const FlowCanvas = () => {
   const reactFlowWrapper = useRef(null);
-  const { nodes, edges, onNodesChange, onEdgesChange, onConnect, addNode } = useFlowStore();
-  const nodeTypes = useMemo(() => ({ pluginNode: PluginNode }), []);
+  const { pipelines, activePipelineId, onNodesChange, onEdgesChange, onConnect, addNode } = useFlowStore();
+  const activePipeline = activePipelineId ? pipelines[activePipelineId] : null;
+
+  // The useMemo for nodeTypes is no longer needed here.
 
   const isValidConnection = useCallback((connection) => {
-    const allNodes = useFlowStore.getState().nodes;
-    const sourceNode = allNodes.find(node => node.id === connection.source);
-    const targetNode = allNodes.find(node => node.id === connection.target);
+    const currentNodes = useFlowStore.getState().pipelines[activePipelineId]?.nodes || [];
+    const sourceNode = currentNodes.find(node => node.id === connection.source);
+    const targetNode = currentNodes.find(node => node.id === connection.target);
     if (!sourceNode || !targetNode) return false;
     const sourceType = sourceNode.data.pluginInfo.type;
     const targetType = targetNode.data.pluginInfo.type;
@@ -29,7 +36,7 @@ const FlowCanvas = () => {
     }
     console.warn(`Invalid connection: from '${sourceType}' to '${targetType}'`);
     return false;
-  }, []);
+  }, [activePipelineId]);
 
   const onDragOver = useCallback((event) => {
     event.preventDefault();
@@ -46,26 +53,31 @@ const FlowCanvas = () => {
     };
     const newNode = {
       id: `node-${plugin.name}-${+new Date()}`,
-      type: 'pluginNode', 
+      type: 'pluginNode',
       position,
-      data: { label: `${plugin.name}`, pluginInfo: plugin },
+      data: { label: `${plugin.name}`, pluginInfo: plugin, params: {} },
     };
     addNode(newNode);
   }, [addNode]);
 
+  if (!activePipeline) {
+    return <div style={{ flexGrow: 1, height: '100%', backgroundColor: '#f9f9f9' }} />;
+  }
+
   return (
     <div style={{ flexGrow: 1, height: '100%' }} ref={reactFlowWrapper}>
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={activePipeline.nodes}
+        edges={activePipeline.edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onDrop={onDrop}
         onDragOver={onDragOver}
-        nodeTypes={nodeTypes}
+        nodeTypes={nodeTypes} // Pass the constant object
         isValidConnection={isValidConnection}
         fitView
+        key={activePipelineId}
       >
         <Background />
         <Controls />
