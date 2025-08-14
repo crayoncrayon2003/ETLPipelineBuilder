@@ -1,6 +1,7 @@
 # 1. Summary
 This application is a tool for implementing ETL pipelines.
 There are two components:
+
 * Backend App  : The core components of this tool.
 * FrontEnd App : The support components of Backend App.
 
@@ -9,9 +10,9 @@ Backend App is a framework for implementing ETL pipelines.
 ETL pipeline functions can be added in the form of plugins.
 
 Plugins implement the following:
-・Their own names
-・Their own parameter schemas
-・Their own functions
+* Their own names
+* Their own parameter schemas
+* Their own functions
 
 The Backend App provides a framework for calling plugin groups.
 The backend application runs independently as an ETL pipeline.
