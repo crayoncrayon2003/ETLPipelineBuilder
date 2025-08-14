@@ -1,5 +1,5 @@
 # 1. BuckEnd App
-# 1.1. Install
+## 1.1. Install
 ```
 cd backend
 python3.12 -m venv env
@@ -9,7 +9,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-# 1.2. Run : API Server
+## 1.2. Run : API Server
 Start API Server
 ```
 uvicorn api.main:app --reload
@@ -25,7 +25,7 @@ check rest api
 curl -X GET "http://127.0.0.1:8000/api/v1/plugins/"
 ```
 
-# 1.3. uninstall
+## 1.3. uninstall
 ```
 deactivate
 rm -rf env
