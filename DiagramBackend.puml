@@ -1,4 +1,4 @@
-@startuml ETL Framework Backend - Final Architecture (Syntax Corrected)
+@startuml ETL Framework Backend
 
 !theme plain
 skinparam classAttributeIconSize 0
@@ -16,68 +16,175 @@ skinparam stereotype {
     BackgroundColor Peru
     FontColor white
 }
-
-' #############################################
-' ###      ENTRY POINTS & CORE              ###
-' #############################################
-
-package "Entry Points" {
-    class "Frontend GUI" as Frontend
-    class "Manual Execution\n(etl_flow.py)" as ManualFlow
+skinparam enum {
+    BackgroundColor LightGreen
 }
+
+' #############################################
+' ###      ENTRY POINTS (Clients / Runners) ###
+' #############################################
+
+package "Clients / Runners" {
+    class "Frontend GUI" as Frontend
+    package "Manual / Batch Execution" {
+        class "run_pipeline_with_parameter_file.py" as BatchRunner {
+            + main(config_file)
+        }
+        class "run_pipeline_directly.py" as DirectRunner {
+            + main()
+        }
+    }
+}
+
+' #############################################
+' ###        BACKEND API SERVER             ###
+' #############################################
 
 package "backend.api" {
     class "main.py" as FastApiApp
     class "pipelines_router.py" as PipelinesRouter
     class "pipeline_service.py" as PipelineService
+    package "schemas" {
+        class PipelineDefinition
+        class PluginInfo
+    }
 }
 
+
+' #############################################
+' ###           CORE FRAMEWORK              ###
+' #############################################
+
 package "backend.core" {
-    class StepExecutor
-    class FrameworkManager <<singleton>>
-    class EtlHookSpecs <<HookSpec>>
-    class DataContainer
+    package "pipeline" {
+        class StepExecutor
+        class DependencyResolver
+    }
+
+    package "plugin_manager" {
+        class FrameworkManager <<singleton>>
+        class EtlHookSpecs <<HookSpec>>
+    }
+
+    package "data_container" {
+        class DataContainer
+        enum SupportedFormats
+    }
+
+    package "config" {
+        class ConfigLoader
+        class ConfigValidator
+    }
 }
 
 ' #############################################
 ' ###              PLUGINS                  ###
 ' #############################################
-
 package "backend.plugins" {
-    package "extractors" {
-        class from_http
-    }
-    package "transformers" {
-        class with_duckdb
-    }
-    ' ... other plugins ...
+    ' extractors
+    ' cleansing
+    ' transformers
+    ' validators
+    ' loaders
+    '  ...
 }
+
+' #############################################
+' ###             UTILITIES                 ###
+' #############################################
+package "backend.utils" {
+    class "file_utils" as FileUtils <<utility>>
+    class "logger" as Logger <<utility>>
+    ' ... others
+}
+
 
 ' #############################################
 ' ###            RELATIONSHIPS              ###
 ' #############################################
 
-' --- Top Level Flow ---
+' --- API Execution Flow ---
 Frontend ..> FastApiApp : HTTP Request
-ManualFlow ..> StepExecutor : uses directly
-
-' --- API Layer Flow ---
 FastApiApp ..> PipelinesRouter
 PipelinesRouter ..> PipelineService
+PipelinesRouter ..> backend.api.schemas.PipelineDefinition : uses for validation
+PipelineService ..> "Prefect Flow" : dynamically builds & runs
+"Prefect Flow" ..> StepExecutor : (via task)
 
-' --- Core Logic Flow ---
-PipelineService ..> StepExecutor : (via Prefect task)
+' --- Manual / Batch Execution Flow ---
+BatchRunner ..> "Prefect Flow" : triggers
+DirectRunner ..> FrameworkManager : uses directly
+
+' --- Core Engine Flow ---
 StepExecutor ..> FrameworkManager : uses singleton
+FrameworkManager ..> backend.plugins : discovers plugins
+FrameworkManager ..> EtlHookSpecs : uses for spec
+StepExecutor ..> DataContainer : passes between steps
 
-' FrameworkManager discovers all classes within the 'backend.plugins' package
-FrameworkManager ..> backend.plugins : discovers & caches
+' --- Utility and Other Dependencies ---
+StepExecutor ..> FileUtils : uses
+' Plugins can use any core component or utility
+backend.plugins ..> DataContainer
+backend.plugins ..> Logger
 
-' Each concrete plugin class implements the hook specification
-backend.plugins.extractors.from_http ..|> EtlHookSpecs : implements
-backend.plugins.transformers.with_duckdb ..|> EtlHookSpecs : implements
+@endumd
 
-' --- Data and Execution Flow ---
-StepExecutor ..> "Plugin Instances" : calls execute_plugin()
-"Plugin Instances" ..> DataContainer : create or consume
+
+@startuml API to Core Call Sequence
+
+!theme plain
+skinparam sequence {
+    ArrowColor Navy
+    ActorBorderColor Navy
+    LifeLineBorderColor Navy
+    ParticipantBorderColor RoyalBlue
+    ParticipantBackgroundColor LightYellow
+}
+
+actor Frontend
+participant "pipelines_router.py" as Router
+participant "pipeline_service.py" as Service
+participant "Prefect Flow/Task" as PrefectTask
+participant "StepExecutor" as Executor
+participant "FrameworkManager" as Manager
+participant "Plugin"
+
+Frontend -> Router : **1. POST /pipelines/run**\n(with PipelineDefinition JSON)
+
+activate Router
+Router -> Service : **2. run_pipeline_from_definition()**
+
+activate Service
+Service -> PrefectTask : **3. @flow / .submit()**\n(Starts the Prefect Flow)
+
+activate PrefectTask
+note right of PrefectTask : The Flow now runs in the background
+Service --> Frontend : **4. 202 Accepted**\n(Responds immediately)
+deactivate Service
+
+PrefectTask -> PrefectTask : **5. Loops through nodes**\n(e.g., node-1-extract)
+
+loop for each node in DAG
+    PrefectTask -> Executor : **6. execute_step()**\n(Passes step_config & inputs)
+
+    activate Executor
+    Executor -> Manager : **7. call_plugin_execute()**\n(Passes plugin_name, params, inputs)
+
+    activate Manager
+    Manager -> Plugin : **8. execute_plugin()**\n(Calls the specific plugin instance)
+
+    activate Plugin
+    Plugin --> Manager : **9. returns DataContainer**
+    deactivate Plugin
+
+    Manager --> Executor : **10. returns DataContainer**
+    deactivate Manager
+
+    Executor --> PrefectTask : **11. returns DataContainer**
+    deactivate Executor
+end
+
+PrefectTask --> PrefectTask : **12. Flow completes**
+deactivate PrefectTask
 
 @enduml
