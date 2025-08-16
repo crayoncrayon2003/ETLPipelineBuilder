@@ -1,0 +1,63 @@
+{
+  "name": "Untitled Pipeline",
+  "schedule": null,
+  "nodes": [
+    {
+      "id": "node-from_http-1755308197399",
+      "plugin": "from_http",
+      "params": {
+        "url": "http://localhost:8080/device_data.csv",
+        "output_path": "test/data/Step1/device_data.csv"
+      },
+      "_ui": {
+        "position": {
+          "x": 109,
+          "y": 167.5
+        }
+      }
+    },
+    {
+      "id": "node-with_jinja2-1755308211580",
+      "plugin": "with_jinja2",
+      "params": {
+        "input_path": "test/data/Step3/device_data.csv",
+        "output_path": "test/data/Step5/device_data.csv",
+        "template_path": "test/data/Step4/step4.j2"
+      },
+      "_ui": {
+        "position": {
+          "x": 630.2769282245193,
+          "y": 379.3516745225435
+        }
+      }
+    },
+    {
+      "id": "node-with_duckdb-1755308214657",
+      "plugin": "with_duckdb",
+      "params": {
+        "input_path": "test/data/Step1/device_data.csv",
+        "output_path": "test/data/Step3/device_data.csv",
+        "query_file": "test/data/Step2/step2.sql",
+        "table_name": "source_data"
+      },
+      "_ui": {
+        "position": {
+          "x": 367.79300652504367,
+          "y": 276.3360964157011
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_node_id": "node-from_http-1755308197399",
+      "target_node_id": "node-with_duckdb-1755308214657",
+      "target_input_name": "input_data"
+    },
+    {
+      "source_node_id": "node-with_duckdb-1755308214657",
+      "target_node_id": "node-with_jinja2-1755308211580",
+      "target_input_name": "input_data"
+    }
+  ]
+}

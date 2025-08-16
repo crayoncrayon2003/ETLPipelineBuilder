@@ -48,13 +48,23 @@ def _generate_dynamic_csv() -> str:
     # Join all lines into a single string and return.
     return "\n".join(csv_lines)
 
+def _generate_static_csv() -> str:
+    csv_lines = ["device_id,temperature,location_coords,measured_at"]
+    csv_lines.append('DEV-001,19.95,"48.856613,2.352222",2025-08-16T02:12:03Z')
+    csv_lines.append('DEV-002,20.35,"51.507351,-0.127758",2025-08-16T02:11:53Z')
+    csv_lines.append('DEV-003,22.69,"48.856613,2.352222",2025-08-16T02:11:43Z')
+    csv_lines.append('DEV-004,28.44,"40.712776,-74.005974",2025-08-16T02:11:33Z')
+
+    return "\n".join(csv_lines)
+
 class HTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Check if the requested path matches the target CSV filename
         if self.path == f"/{CSV_FILENAME}":
 
             # Dynamically generate the CSV data in memory
-            csv_data = _generate_dynamic_csv()
+            # csv_data = _generate_dynamic_csv()
+            csv_data = _generate_static_csv()
 
             # Encode the string data to a UTF-8 byte sequence
             response_body = csv_data.encode('utf-8')

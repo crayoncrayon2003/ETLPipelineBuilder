@@ -129,7 +129,7 @@ The BuckEnd App is a pipeline framework.
 The BuckEnd App works without the FrontEnd App.
 
 ```
-(env) python ./backend/run_pipeline_with_parameter_file.py ./test/pipelines/pipeline.json
+(env) python run_pipeline_with_parameter_file.py ../test/pipelines/pipeline.json
 ```
 
 ### 3.3.4. clean up

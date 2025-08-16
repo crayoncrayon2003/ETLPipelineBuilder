@@ -11,7 +11,7 @@ from core.data_container.container import DataContainer
 def main():
     print("--- Starting direct pipeline execution ---")
 
-    working_dir = Path("./test/data/").resolve()
+    working_dir = Path("../test/data/").resolve()
 
     http_output_file = working_dir / "Step1" / "device_data.csv"
     duckdb_output_file = working_dir / "Step3" / "structured_data.parquet"
