@@ -96,7 +96,6 @@ def main():
     parser = argparse.ArgumentParser(description="ETL Framework Batch Runner.")
     parser.add_argument(
         "config_file",
-        # ★★★ Use the custom type to resolve the path immediately ★★★
         type=resolve_path,
         help="Path to the pipeline definition JSON file."
     )
