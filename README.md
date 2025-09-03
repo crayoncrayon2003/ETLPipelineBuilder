@@ -88,10 +88,10 @@ or
 npm run dev
 ```
 
-## 3.3. How to Use
+## 3.3. How to Use : Case1 Basic
 ### 3.3.1. Run Dummy Server
 ```
-pyton test/TestWebserver.py
+pyton test/Server/TestWebServer.py
 ```
 
 ### 3.3.2. FrontEnd App
@@ -144,3 +144,52 @@ rm -rf env
 rm -rf node_modules
 rm package-lock.json
 ```
+
+## 3.3. How to Use : Case2 Authentication
+Please refer to the `from_http_with_basic_auth` plugin.
+To access a web server with basic authentication, you must configure the username and password in `from_http_with_basic_auth`.
+For example:
+```
+"params": {
+  "url": "http://localhost:8080/device_data.csv",
+  "output_path": "./test/data/Step1/device_data.csv",
+  "username": "testuser",
+  "password": "local_secret_password_123"
+}
+```
+
+When running Backend Apps on AWS, you'll face the following issue:
+#1. When testing the pipeline via GUI : You want to verify that the `from_http_with_basic_auth` configuration with authentication credentials can access the web server.
+#2. When running on AWS : You want to set the credentials stored in the secret manager to `from_http_with_basic_auth`.
+
+The backend App has a mechanism to solve this issue.
+refer to backend/scripts/core/secrets/secret_resolver.py
+
+When executing #1, define your authentication credentials in backend/.env.
+For example:
+　MY_HTTP_BASIC_USERNAME="testuser"
+　MY_HTTP_BASIC_PASSWORD="local_secret_password_123"
+
+The configuration should be as follows:
+```
+"params": {
+  "url": "http://localhost:8080/device_data.csv",
+  "output_path”: “./test/data/Step1/device_data.csv",
+  "username”: ${secrets.MY_HTTP_BASIC_USERNAME},
+  "password”: ${secrets.MY_HTTP_BASIC_PASSWORD}
+}
+```
+
+When executing #2, do not use backend/.env.
+The configuration should be as follows:
+```
+"params": {
+  "url": "http://localhost:8080/device_data.csv",
+  "output_path": "./test/data/Step1/device_data.csv",
+  "username": ${secrets.prod/MyApi/credentials@username},
+  "password": ${secrets.prod/MyApi/credentials@password}
+}
+```
+
+secrets.prod/MyApi/credentials is the secret name in AWS Secrets Manager.
+username/password is the key in the JSON stored in the secret.

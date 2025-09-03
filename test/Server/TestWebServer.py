@@ -1,4 +1,3 @@
-
 from http.server import HTTPServer
 from http.server import BaseHTTPRequestHandler
 import random
