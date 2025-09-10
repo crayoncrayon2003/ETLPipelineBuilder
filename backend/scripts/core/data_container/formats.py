@@ -1,3 +1,4 @@
+from typing import Union
 from enum import Enum
 from pathlib import Path
 
@@ -56,7 +57,8 @@ class SupportedFormats(Enum):
         raise ValueError(f"'{value}' is not a valid supported format.")
 
     @classmethod
-    def from_path(cls, path: str | Path) -> 'SupportedFormats':
+    # def from_path(cls, path: str | Path) -> 'SupportedFormats':
+    def from_path(cls, path: Union[str, Path]) -> 'SupportedFormats':
         """
         Infers the SupportedFormats member from a file path's extension.
         This centralizes the logic for determining file type from a path.

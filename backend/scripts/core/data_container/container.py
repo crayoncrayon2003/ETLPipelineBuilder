@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 from pathlib import Path
 
@@ -18,7 +18,8 @@ class DataContainer:
         num_files = len(self.file_paths)
         return (f"<DataContainer | Data Shape: {data_shape} | File Paths: {num_files}>")
 
-    def add_file_path(self, path: str | Path):
+    # def add_file_path(self, path: str | Path):
+    def add_file_path(self, path: Union[str, Path]):
         """Adds a file path associated with the data in this container."""
         self.file_paths.append(Path(path))
 

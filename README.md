@@ -27,7 +27,7 @@ In order to connect with the FrontEnd App, the Backend App has a REST API.
 ## 2.1. Setup
 ```
 cd backend
-python3.12 -m venv env
+python3.9 -m venv env
 source env/bin/activate
 (env) pip install --upgrade pip setuptools wheel
 (env) pip install -r requirements.txt
@@ -44,7 +44,7 @@ source env/bin/activate
 ### 3.1.1. Setup
 ```
 cd backend
-python3.12 -m venv env
+python3.9 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
@@ -193,3 +193,44 @@ The configuration should be as follows:
 
 secrets.prod/MyApi/credentials is the secret name in AWS Secrets Manager.
 username/password is the key in the JSON stored in the secret.
+
+
+## 3.3. How to Use : Case3 AWS
+Run the following command locally
+```
+git clone https://github.com/crayoncrayon2003/ETLPipelineBuilder.git
+cd ETLPipelineBuilder/backend
+python3.9 -m venv env
+source env/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
+pip install -e .
+python setup.py sdist bdist_wheel
+
+aws s3 cp dist/<name>.whl s3://<bucket_name>/lib/
+```
+
+Configure the following in AWS. ex.Glue
+* Script path    (default)       : s3://<bucket_name>/scripts/
+* Temporary path (default)       : s3://<bucket_name>/temporary/
+* Python library path            : s3://<bucket_name>/lib/<name>.whl
+
+Sample code for Glue Python Shell
+```
+import os
+from pathlib import Path
+import boto3
+
+from core.plugin_manager.manager import framework_manager
+from core.data_container.container import DataContainer
+
+http_params = {
+    "url": "https://<bucket_name>/device_data.csv",
+    "output_path": "s3://<bucket_name>/device_data.csv"
+}
+http_result_container = framework_manager.call_plugin_execute(
+    plugin_name="from_http",
+    params=http_params,
+    inputs={}
+)
+```

@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 class ConfigLoader:
     """
@@ -11,7 +11,8 @@ class ConfigLoader:
     are distinct from the pipeline-specific step definitions handled by
     `PipelineParser`.
     """
-    def __init__(self, config_path: Optional[str | Path] = None):
+    # def __init__(self, config_path: Optional[str | Path] = None):
+    def __init__(self, config_path: Optional[Union[str, Path]] = None):
         """
         Initializes the ConfigLoader.
 

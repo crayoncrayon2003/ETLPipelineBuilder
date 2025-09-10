@@ -2,7 +2,7 @@ import os
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import json
 
 class BaseSecretResolver(ABC):
@@ -10,7 +10,8 @@ class BaseSecretResolver(ABC):
     Abstract base class for secret resolution strategies.
     """
     @abstractmethod
-    def resolve(self, secret_reference: str) -> str | None:
+    # def resolve(self, secret_reference: str) -> str | None:
+    def resolve(self, secret_reference: str) -> Optional[str]:
         """
         Resolves a secret by its reference string.
         Returns the secret value as a string, or None if not found.
@@ -34,7 +35,8 @@ class DotEnvSecretResolver(BaseSecretResolver):
             print(f"Warning: .env file not found at {dotenv_path}. "
                   "Will rely on existing environment variables.")
 
-    def resolve(self, secret_reference: str) -> str | None:
+    # def resolve(self, secret_reference: str) -> str | None:
+    def resolve(self, secret_reference: str) -> Optional[str]:
         # For .env files, we ignore any @key part and use the full reference as the key
         secret_name = secret_reference.split('@', 1)[0]
         return os.getenv(secret_name)
@@ -61,7 +63,8 @@ class AWSSecretResolver(BaseSecretResolver):
             print(f"Error initializing boto3 client: {e}")
             self.client = None
 
-    def resolve(self, secret_reference: str) -> str | None:
+    # def resolve(self, secret_reference: str) -> str | None:
+    def resolve(self, secret_reference: str) -> Optional[str]:
         if not self.client:
             return None
 

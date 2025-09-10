@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import shutil
-from typing import Dict, Any
+from typing import Dict, Any, Optional,Union
 import s3fs
 
 # Import the Enum from our single source of truth
@@ -22,7 +22,8 @@ class StorageAdapter:
             return {}
         return {}
 
-    def read_df(self, path: str, read_options: Dict[str, Any] | None = None) -> pd.DataFrame:
+    # def read_df(self, path: str, read_options: Dict[str, Any] | None = None) -> pd.DataFrame:
+    def read_df(self, path: str, read_options: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """
         Reads a file from a given path (local or S3) into a pandas DataFrame,
         inferring the format from the file extension.
@@ -48,7 +49,8 @@ class StorageAdapter:
             print(f"Failed to read file from '{path}': {e}")
             raise
 
-    def write_df(self, df: pd.DataFrame, path: str, write_options: Dict[str, Any] | None = None):
+    # def write_df(self, df: pd.DataFrame, path: str, write_options: Dict[str, Any] | None = None):
+    def write_df(self, df: pd.DataFrame, path: str, write_options: Optional[Dict[str, Any]] = None):
         """
         Writes a pandas DataFrame to a given path (local or S3).
         """
@@ -152,7 +154,8 @@ class StorageAdapter:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(content)
 
-    def download_remote_file(self, remote_path: str, local_path: str | Path):
+    # def download_remote_file(self, remote_path: str, local_path: str | Path):
+    def download_remote_file(self, remote_path: str, local_path: Union[str, Path]):
         """
         Downloads a file from a remote storage location (currently S3) to a local path.
         If the remote path is local, it performs a copy.
@@ -184,7 +187,8 @@ class StorageAdapter:
             shutil.copy(source, local_p)
             print("Copied from local path complete.")
 
-    def upload_local_file(self, local_path: str | Path, remote_path: str):
+    # def upload_local_file(self, local_path: str | Path, remote_path: str):
+    def upload_local_file(self, local_path: Union[str, Path], remote_path: str):
         """
         Uploads a local file to a remote storage location (currently S3).
         If the remote path is local, it performs a copy.

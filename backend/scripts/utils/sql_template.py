@@ -1,11 +1,9 @@
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Union
 
-def render_sql_template(
-    template_path: str | Path,
-    context: Dict[str, Any]
-) -> str:
+# def render_sql_template(template_path: str | Path, context: Dict[str, Any]) -> str:
+def render_sql_template(template_path: Union[str, Path], context: Dict[str, Any]) -> str:
     """
     Renders a SQL query from a Jinja2 template file.
 
