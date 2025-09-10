@@ -1,9 +1,15 @@
+import os
 import pandas as pd
 from typing import Dict, Any, List, Optional
 import pluggy
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -83,7 +89,7 @@ class DataQualityValidator:
         if all_errors:
             raise ValueError(f"Data quality validation failed:\n- " + "\n- ".join(all_errors))
 
-        print("Data quality checks passed. Copying file to output path.")
+        logger.info("Data quality checks passed. Copying file to output path.")
         storage_adapter.copy_file(input_path, output_path)
 
         output_container = DataContainer()

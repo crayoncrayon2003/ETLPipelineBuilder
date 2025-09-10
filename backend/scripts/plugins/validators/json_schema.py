@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -5,6 +6,11 @@ import jsonschema, pandas as pd, pluggy
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -67,7 +73,7 @@ class JsonSchemaValidator:
         if errors:
             raise ValueError(f"JSON Schema validation failed for {len(errors)} records:\n- " + "\n- ".join(errors))
 
-        print("JSON Schema validation successful. Copying file to output path.")
+        logger.info("JSON Schema validation successful. Copying file to output path.")
         storage_adapter.copy_file(input_path, output_path)
         output_container = DataContainer()
         output_container.add_file_path(output_path)

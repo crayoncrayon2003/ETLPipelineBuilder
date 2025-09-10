@@ -1,3 +1,4 @@
+import os
 import ftplib
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -6,6 +7,11 @@ import tempfile
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -72,15 +78,15 @@ class FtpExtractor:
             local_temp_path = Path(temp_dir) / Path(remote_path).name
 
             # Download the file from the FTP server to the temporary local path
-            print(f"Connecting to FTP at {host} to download to temporary storage...")
+            logger.info(f"Connecting to FTP at {host} to download to temporary storage...")
             try:
                 with ftplib.FTP(host, timeout=60) as ftp:
                     ftp.login(user=user, passwd=password)
                     with open(local_temp_path, 'wb') as f:
                         ftp.retrbinary(f'RETR {remote_path}', f.write)
-                print(f"Successfully downloaded to temporary location: {local_temp_path}")
+                logger.info(f"Successfully downloaded to temporary location: {local_temp_path}")
             except ftplib.all_errors as e:
-                print(f"FTP download operation failed: {e}")
+                logger.error(f"FTP download operation failed: {e}")
                 raise
 
             # Use the StorageAdapter to move the temporary file to its final destination

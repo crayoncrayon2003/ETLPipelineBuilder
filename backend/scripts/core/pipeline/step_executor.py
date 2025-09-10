@@ -1,10 +1,15 @@
-from typing import Dict, Any, Optional
+import os
 import re
+from typing import Dict, Any, Optional
 
 from core.infrastructure.secret_resolver import secret_resolver
-
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class StepExecutor:
     """
@@ -26,7 +31,7 @@ class StepExecutor:
                 match = secret_pattern.fullmatch(value)
                 if match:
                     secret_name = match.group(1)
-                    print(f"  Resolving secret: '{secret_name}'...")
+                    logger.info(f"  Resolving secret: '{secret_name}'...")
                     resolved_value = secret_resolver.resolve(secret_name)
                     if resolved_value is None:
                         raise ValueError(f"Secret '{secret_name}' could not be resolved.")
@@ -61,7 +66,7 @@ class StepExecutor:
         params = step_config.get('params', {})
         step_name = step_config.get('name', plugin_name)
 
-        print(f"  Executing step: '{step_name}' using plugin: '{plugin_name}'")
+        logger.info(f"  Executing step: '{step_name}' using plugin: '{plugin_name}'")
 
         try:
             params_with_secrets = self._resolve_secrets_in_params(params)
@@ -83,9 +88,9 @@ class StepExecutor:
                 inputs=inputs or {}
             )
 
-            print(f"  Step '{step_name}' completed.")
+            logger.info(f"  Step '{step_name}' completed.")
             return output_container
 
         except Exception as e:
-            print(f"  ERROR during step '{step_name}': {e}")
+            logger.error(f"  ERROR during step '{step_name}': {e}")
             raise

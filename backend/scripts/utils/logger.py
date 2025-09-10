@@ -1,29 +1,25 @@
-# backend/utils/logger.py
-
 import logging
 import sys
+import os
 from typing import Optional
 
 def setup_logger(
     name: str = "etl_framework",
-    level: str = "INFO"
+    level: str = "INFO",
+    # log_file: Optional[str] = None
+    log_file: Optional[str] = "/tmp/etl_framework.log"
 ) -> logging.Logger:
     """
-    Sets up and configures a standardized logger.
-
-    This function creates a logger with a specified name and level,
-    and attaches a handler that prints logs to the console with a
-    consistent format.
+    Sets up and configures a standardized logger that outputs to both
+    console and an optional log file.
 
     Args:
-        name (str, optional): The name of the logger. It's good practice
-            to use the module name (`__name__`) here. Defaults to "etl_framework".
-        level (str, optional): The minimum logging level to output.
-            Can be 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'.
-            Defaults to "INFO".
+        name (str): Logger name. Use `__name__` to keep module-specific loggers.
+        level (str): Logging level (DEBUG, INFO, etc.).
+        log_file (str, optional): File path for log output. If None, file logging is skipped.
 
     Returns:
-        logging.Logger: A configured logger instance.
+        logging.Logger: Configured logger instance.
     """
     # Get the numeric logging level from the string
     log_level = getattr(logging, level.upper(), logging.INFO)
@@ -44,8 +40,19 @@ def setup_logger(
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # Optional file handler
+    if log_file:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
 

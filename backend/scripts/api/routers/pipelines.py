@@ -1,5 +1,4 @@
-# backend/api/routers/pipelines.py
-
+import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pathlib import Path
 import json
@@ -7,6 +6,11 @@ import json
 # Import the specific Pydantic model directly from its source file.
 from api.schemas.pipeline import PipelineDefinition
 from api.services.pipeline_service import run_pipeline_from_definition
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 # The project root is determined here to resolve paths for saving definition files.
 # It assumes this file is at backend/scripts/api/routers/pipelines.py
@@ -36,7 +40,7 @@ def _save_pipeline_definition(pipeline_def: PipelineDefinition) -> Path:
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(pipeline_def.model_dump_json(indent=2))
 
-    print(f"Pipeline definition saved to: {file_path}")
+    logger.info(f"Pipeline definition saved to: {file_path}")
     return file_path
 
 
@@ -49,7 +53,7 @@ async def run_pipeline(
     Receives a pipeline definition and triggers an IMMEDIATE one-time run.
     """
     try:
-        print(f"Received request for an immediate run of pipeline: {pipeline_def.name}")
+        logger.info(f"Received request for an immediate run of pipeline: {pipeline_def.name}")
 
         # Delegate the execution to the service layer, running it in the background.
         background_tasks.add_task(

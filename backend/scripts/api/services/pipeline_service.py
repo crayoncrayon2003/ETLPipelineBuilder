@@ -1,12 +1,18 @@
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import re
+import os
 
 from prefect import flow, task
 
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
 from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 _node_results_cache: Dict[str, Any] = {}
 
@@ -73,7 +79,7 @@ def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root:
     """
     @flow(name=pipeline_def.name)
     def dynamic_etl_flow():
-        print(f"Starting dynamically generated flow: {pipeline_def.name}")
+        logger.info(f"Starting dynamically generated flow: {pipeline_def.name}")
         _node_results_cache.clear()
         nodes_map = {node.id: node for node in pipeline_def.nodes}
         for node_id in nodes_map:

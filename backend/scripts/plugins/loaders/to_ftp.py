@@ -1,3 +1,4 @@
+import os
 import ftplib
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -6,6 +7,11 @@ import tempfile
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -46,7 +52,7 @@ class FtpLoader:
             temp_local_path = Path(temp_dir) / Path(input_path_str).name
 
             if input_path_str.startswith("s3://"):
-                print(f"Downloading '{input_path_str}' from S3 to temporary location using StorageAdapter...")
+                logger.info(f"Downloading '{input_path_str}' from S3 to temporary location using StorageAdapter...")
                 try:
                     file_content_bytes = storage_adapter.read_bytes(input_path_str)
                     temp_local_path.write_bytes(file_content_bytes)
@@ -60,7 +66,7 @@ class FtpLoader:
                 raise FileNotFoundError(f"Input file could not be found or downloaded: {local_file_to_upload}")
 
             remote_filename = local_file_to_upload.name
-            print(f"Connecting to FTP at {host} to upload '{remote_filename}'...")
+            logger.info(f"Connecting to FTP at {host} to upload '{remote_filename}'...")
 
             try:
                 with ftplib.FTP(host, timeout=60) as ftp:
@@ -69,7 +75,7 @@ class FtpLoader:
                         try:
                             ftp.cwd(remote_dir)
                         except ftplib.error_perm:
-                            print(f"Remote directory '{remote_dir}' not found, attempting to create...")
+                            logger.error(f"Remote directory '{remote_dir}' not found, attempting to create...")
                             for part in Path(remote_dir).parts:
                                 if part:
                                     try:
@@ -77,13 +83,13 @@ class FtpLoader:
                                     except ftplib.error_perm:
                                         pass
                                     ftp.cwd(part)
-                            print(f"Successfully navigated/created to '{remote_dir}'.")
+                            logger.info(f"Successfully navigated/created to '{remote_dir}'.")
 
-                    print(f"Uploading '{local_file_to_upload.name}' to '{remote_dir}/{remote_filename}'...")
+                    logger.info(f"Uploading '{local_file_to_upload.name}' to '{remote_dir}/{remote_filename}'...")
                     with open(local_file_to_upload, 'rb') as local_file:
                         ftp.storbinary(f'STOR {remote_filename}', local_file)
-                print(f"File '{remote_filename}' uploaded successfully to FTP.")
+                logger.info(f"File '{remote_filename}' uploaded successfully to FTP.")
             except ftplib.all_errors as e:
-                print(f"FTP upload failed: {e}")
+                logger.error(f"FTP upload failed: {e}")
                 raise
         return None

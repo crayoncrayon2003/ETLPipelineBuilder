@@ -1,3 +1,4 @@
+import os
 import requests
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -6,6 +7,11 @@ from urllib.parse import urlparse
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -55,7 +61,7 @@ class HttpExtractor:
                 raise ValueError("Could not infer filename from URL.")
             final_output_path = final_output_path + filename
 
-        print(f"Downloading from '{url}' to '{final_output_path}'...")
+        logger.info(f"Downloading from '{url}' to '{final_output_path}'...")
         try:
             with requests.get(url=url, timeout=60) as response:
                 response.raise_for_status()
@@ -63,9 +69,9 @@ class HttpExtractor:
                 # It will automatically handle local vs. S3 paths.
                 storage_adapter.write_bytes(response.content, final_output_path)
 
-            print("File downloaded and saved successfully.")
+            logger.info("File downloaded and saved successfully.")
         except requests.RequestException as e:
-            print(f"HTTP request failed: {e}")
+            logger.error(f"HTTP request failed: {e}")
             raise
 
         container = DataContainer()

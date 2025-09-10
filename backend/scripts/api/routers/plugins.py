@@ -1,8 +1,14 @@
 from fastapi import APIRouter
 from typing import List, Any
+import os
 
 from core.plugin_manager.manager import framework_manager
 from api.schemas.plugin import PluginInfo
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 router = APIRouter(
     prefix="/plugins",
@@ -24,7 +30,7 @@ async def get_available_plugins():
             try:
                 params_schema = instance.get_parameters_schema()
             except Exception as e:
-                print(f"ERROR getting schema for plugin '{plugin_name}': {e}")
+                logger.error(f"ERROR getting schema for plugin '{plugin_name}': {e}")
                 params_schema = {"type": "object", "properties": {"error": {"type": "string", "default": f"Could not load schema: {e}"}}}
 
         plugin_info = {

@@ -4,6 +4,12 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
+import os
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class BaseSecretResolver(ABC):
     """
@@ -29,10 +35,10 @@ class DotEnvSecretResolver(BaseSecretResolver):
         dotenv_path = Path(__file__).resolve().parents[3] / '.env'
 
         if dotenv_path.exists():
-            print(f"Loading secrets from local .env file: {dotenv_path}")
+            logger.info(f"Loading secrets from local .env file: {dotenv_path}")
             load_dotenv(dotenv_path=dotenv_path)
         else:
-            print(f"Warning: .env file not found at {dotenv_path}. "
+            logger.info(f"Warning: .env file not found at {dotenv_path}. "
                   "Will rely on existing environment variables.")
 
     # def resolve(self, secret_reference: str) -> str | None:
@@ -55,12 +61,12 @@ class AWSSecretResolver(BaseSecretResolver):
             import boto3
             # boto3 will use credentials from the execution environment's IAM role
             self.client = boto3.client('secretsmanager')
-            print("AWS Secret Resolver initialized.")
+            logger.info("AWS Secret Resolver initialized.")
         except ImportError:
-            print("Error: boto3 is not installed. AWSSecretResolver cannot be used.")
+            logger.error("Error: boto3 is not installed. AWSSecretResolver cannot be used.")
             self.client = None
         except Exception as e:
-            print(f"Error initializing boto3 client: {e}")
+            logger.error(f"Error initializing boto3 client: {e}")
             self.client = None
 
     # def resolve(self, secret_reference: str) -> str | None:
@@ -80,7 +86,7 @@ class AWSSecretResolver(BaseSecretResolver):
                 secret_string = self._cache[secret_name]
             else:
                 # If not in cache, fetch from AWS Secrets Manager
-                print(f"Fetching secret '{secret_name}' from AWS Secrets Manager...")
+                logger.info(f"Fetching secret '{secret_name}' from AWS Secrets Manager...")
                 response = self.client.get_secret_value(SecretId=secret_name)
                 secret_string = response.get('SecretString')
 
@@ -95,7 +101,7 @@ class AWSSecretResolver(BaseSecretResolver):
             if json_key:
                 secret_data = json.loads(secret_string)
                 if json_key not in secret_data:
-                     print(f"Key '{json_key}' not found in secret '{secret_name}'.")
+                     logger.info(f"Key '{json_key}' not found in secret '{secret_name}'.")
                      return None
                 return str(secret_data.get(json_key)) # Ensure the result is a string
             else:
@@ -103,13 +109,13 @@ class AWSSecretResolver(BaseSecretResolver):
                 return secret_string
 
         except self.client.exceptions.ResourceNotFoundException:
-            print(f"Secret '{secret_name}' not found in AWS Secrets Manager.")
+            logger.error(f"Secret '{secret_name}' not found in AWS Secrets Manager.")
             return None
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"Failed to parse or find key '{json_key}' in secret '{secret_name}': {e}")
+            logger.error(f"Failed to parse or find key '{json_key}' in secret '{secret_name}': {e}")
             return None
         except Exception as e:
-            print(f"Failed to retrieve secret '{secret_reference}' from AWS: {e}")
+            logger.error(f"Failed to retrieve secret '{secret_reference}' from AWS: {e}")
             return None
 
 def get_secret_resolver() -> BaseSecretResolver:
@@ -121,10 +127,10 @@ def get_secret_resolver() -> BaseSecretResolver:
     is_glue = os.getenv("GLUE_VERSION") is not None
 
     if is_lambda or is_glue:
-        print("AWS environment detected. Using AWS Secrets Manager for secret resolution.")
+        logger.info("AWS environment detected. Using AWS Secrets Manager for secret resolution.")
         return AWSSecretResolver()
     else:
-        print("Local environment detected. Using .env file for secret resolution.")
+        logger.info("Local environment detected. Using .env file for secret resolution.")
         return DotEnvSecretResolver()
 
 # Create a singleton instance of the appropriate resolver.

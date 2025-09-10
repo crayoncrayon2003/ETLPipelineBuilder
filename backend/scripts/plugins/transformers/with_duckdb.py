@@ -1,3 +1,4 @@
+import os
 import duckdb
 from typing import Dict, Any, Optional
 import pluggy
@@ -5,6 +6,14 @@ from pathlib import Path
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+os.environ["HOME"] = "/tmp"
+os.environ["DUCKDB_TMPDIR"] = "/tmp/duckdb_cache"
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -53,66 +62,50 @@ class DuckDBTransformer:
             "required": ["output_path"]
         }
 
-    def _get_query(self, params: Dict[str, Any]) -> str:
-        """Loads the SQL query from a string or a local file."""
-        if params.get("query"):
-            return params.get("query")
-
-        query_file_path = params.get("query_file")
-        if not query_file_path:
-            raise ValueError("DuckDBTransformer requires either 'query' or 'query_file' parameter.")
-
-        try:
-            # Query files are always read from the local filesystem where the code runs.
-            with open(query_file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Query file not found at: {query_file_path}")
+    def _get_query(self, path: str) -> str:
+        """Delegates reading query file to StorageAdapter (S3 or local)."""
+        return storage_adapter.read_text(path)
 
     @hookimpl
     def execute_plugin(
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
+        input_path = str(params.get("input_path"))
         output_path = str(params.get("output_path"))
-        sql_query = self._get_query(params)
-        input_path = str(params.get("input_path")) if params.get("input_path") else None
+        query_path = str(params.get("query_file"))
+        table_name = str(params.get("table_name", "source_data"))
 
-        if not output_path:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'output_path'.")
+        sql_query = self._get_query(query_path)
 
         try:
             con = duckdb.connect(database=':memory:')
+            con.execute("INSTALL httpfs;")
+            con.execute("LOAD httpfs;")
+            con.execute("CREATE SECRET s3_access_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN, CHAIN 'config', REGION 'ap-northeast-1');")
 
             if input_path:
-                input_path = Path(input_path)
-                if not input_path.exists(): raise FileNotFoundError(f"Input file not found: {input_path}")
-                table_name = params.get("table_name", "source_data")
+                read_expr = f"read_csv_auto('{input_path}')" if input_path.endswith('.csv') \
+                    else f"read_parquet('{input_path}')" if input_path.endswith('.parquet') \
+                    else f"read_json_auto('{input_path}')" if input_path.endswith('.json') or input_path.endswith('.jsonl') \
+                    else None
 
-                suffix = input_path.suffix.lower()
-                read_function = ""
-                if suffix == '.csv':
-                    read_function = f"read_csv_auto('{str(input_path)}')"
-                elif suffix == '.parquet':
-                    read_function = f"read_parquet('{str(input_path)}')"
-                elif suffix == '.json' or suffix == '.jsonl':
-                    read_function = f"read_json_auto('{str(input_path)}')"
-                else:
-                    raise ValueError(f"Unsupported input file type for DuckDB plugin: {suffix}")
+                if not read_expr:
+                    raise ValueError(f"Unsupported file type for input: {input_path}")
 
-                con.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM {read_function};")
-                print(f"Registered '{input_path.name}' as table '{table_name}'.")
+                con.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM {read_expr};")
+                logger.info(f"Registered '{Path(input_path).name}' as table '{table_name}'.")
 
             result_df = con.execute(sql_query).fetch_df()
 
         except Exception as e:
-            print(f"ERROR during DuckDB transformation: {e}")
+            logger.error(f"ERROR during DuckDB transformation: {e}")
             raise
         finally:
             if 'con' in locals() and con: con.close()
 
         # Use the StorageAdapter to write the result, which handles both local and S3.
         storage_adapter.write_df(result_df, output_path)
-        print(f"Transformation complete. Result with {len(result_df)} rows saved.")
+        logger.info(f"Transformation complete. Result with {len(result_df)} rows saved.")
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)

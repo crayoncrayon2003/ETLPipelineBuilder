@@ -1,5 +1,11 @@
+import os
 from typing import Dict, Any, Type, Optional
 from pydantic import BaseModel, ValidationError
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class ConfigValidator:
     """
@@ -36,9 +42,9 @@ class ConfigValidator:
         """
         try:
             validated_config = self.schema_model.model_validate(config_data)
-            print("Configuration validation successful.")
+            logger.info("Configuration validation successful.")
             return validated_config
         except ValidationError as e:
-            print(f"Configuration validation failed:\n{e}")
+            logger.error(f"Configuration validation failed:\n{e}")
             return None
 

@@ -1,6 +1,12 @@
+import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class ConfigLoader:
     """
@@ -38,7 +44,7 @@ class ConfigLoader:
             yaml.YAMLError: If there is an error parsing the YAML file.
         """
         if not self.config_path:
-            print("Warning: ConfigLoader initialized without a path. No config loaded.")
+            logger.info("Warning: ConfigLoader initialized without a path. No config loaded.")
             return self._config
 
         if not self.config_path.exists():

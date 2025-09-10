@@ -1,9 +1,15 @@
+import os
 from typing import Dict, Any, List, Optional
 import pluggy
 import pandas as pd
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -65,7 +71,7 @@ class BusinessRulesValidator:
         if all_errors:
             raise ValueError(f"Business rule validation failed:\n- " + "\n- ".join(all_errors))
 
-        print("All business rules passed. Copying file to output path.")
+        logger.info("All business rules passed. Copying file to output path.")
         storage_adapter.copy_file(input_path, output_path)
 
         output_container = DataContainer()

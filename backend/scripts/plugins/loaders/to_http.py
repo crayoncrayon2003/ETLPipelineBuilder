@@ -1,3 +1,4 @@
+import os
 import asyncio, aiohttp, json
 from typing import Dict, Any, List, Optional
 import pluggy
@@ -6,6 +7,11 @@ import tempfile
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -38,11 +44,11 @@ class HttpLoader:
             async with session.request(self.method, self.url, data=payload.encode('utf-8'), headers=self.headers) as response:
                 if response.status >= 400:
                     error_text = await response.text()
-                    print(f"Request {index+1} failed with status {response.status}: {error_text[:200]}")
+                    logger.info(f"Request {index+1} failed with status {response.status}: {error_text[:200]}")
                     response.raise_for_status()
-                print(f"Request {index+1} succeeded.")
+                logger.info(f"Request {index+1} succeeded.")
         except aiohttp.ClientError as e:
-            print(f"Request {index+1} failed with client error: {e}")
+            logger.error(f"Request {index+1} failed with client error: {e}")
             if self.stop_on_fail: raise
 
     async def _main(self, payloads: List[str]):
@@ -68,7 +74,7 @@ class HttpLoader:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'url'.")
         if 'Content-Type' not in self.headers: self.headers['Content-Type'] = 'application/json'
 
-        print(f"Reading file '{input_path}' to send to HTTP endpoint using StorageAdapter...")
+        logger.info(f"Reading file '{input_path}' to send to HTTP endpoint using StorageAdapter...")
         try:
             file_content = storage_adapter.read_text(input_path)
             payloads = [line.strip() for line in file_content.splitlines() if line.strip()]
@@ -76,13 +82,13 @@ class HttpLoader:
             raise IOError(f"Failed to read input file '{input_path}' using StorageAdapter: {e}") from e
 
         if not payloads:
-            print("No data in file to load."); return None
+            logger.info("No data in file to load."); return None
 
-        print(f"Sending {len(payloads)} HTTP {self.method} requests with concurrency {self.concurrency}...")
+        logger.info(f"Sending {len(payloads)} HTTP {self.method} requests with concurrency {self.concurrency}...")
         try:
             asyncio.run(self._main(payloads))
-            print("All HTTP requests processed successfully.")
+            logger.info("All HTTP requests processed successfully.")
         except Exception as e:
-            print(f"An error occurred during HTTP loading: {e}")
+            logger.error(f"An error occurred during HTTP loading: {e}")
             raise
         return None

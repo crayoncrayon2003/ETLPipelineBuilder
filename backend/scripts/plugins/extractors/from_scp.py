@@ -1,3 +1,4 @@
+import os
 import paramiko
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -6,6 +7,11 @@ import tempfile
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -84,17 +90,17 @@ class ScpExtractor:
             try:
                 ssh_client = paramiko.SSHClient()
                 ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                print(f"Connecting to {host} as user '{user}' for SCP download...")
+                logger.info(f"Connecting to {host} as user '{user}' for SCP download...")
                 ssh_client.connect(
                     hostname=host, port=port, username=user,
                     password=password, key_filename=key_filepath, timeout=30
                 )
                 with ssh_client.open_sftp() as sftp:
-                    print(f"Downloading '{remote_path}' to temporary location...")
+                    logger.info(f"Downloading '{remote_path}' to temporary location...")
                     sftp.get(remote_path, str(local_temp_path))
-                print(f"Successfully downloaded to {local_temp_path}")
+                logger.info(f"Successfully downloaded to {local_temp_path}")
             except Exception as e:
-                print(f"SCP download operation failed: {e}")
+                logger.error(f"SCP download operation failed: {e}")
                 raise
             finally:
                 if ssh_client:

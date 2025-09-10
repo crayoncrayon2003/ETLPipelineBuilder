@@ -1,8 +1,14 @@
+import os
 from typing import Dict, Any, Union, List, Optional
 import pluggy
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -62,11 +68,11 @@ class DuplicateRemover:
         df = storage_adapter.read_df(input_path)
 
         initial_row_count = len(df)
-        print(f"Initial rows: {initial_row_count}")
+        logger.info(f"Initial rows: {initial_row_count}")
 
         deduplicated_df = df.drop_duplicates(subset=subset, keep=keep, inplace=False)
         rows_removed = initial_row_count - len(deduplicated_df)
-        print(f"Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
+        logger.info(f"Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
 
         # Use the storage adapter to write to local or S3
         storage_adapter.write_df(deduplicated_df, output_path)

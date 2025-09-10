@@ -1,12 +1,17 @@
-import json
 import os
-from typing import Dict, Any, Optional
-from jinja2 import Environment, FileSystemLoader
+import json
 import pandas as pd
 import pluggy
+from typing import Dict, Any, Optional
+from jinja2 import Environment, FileSystemLoader
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -77,7 +82,7 @@ class Jinja2Transformer:
                 json_object = json.loads(rendered_string)
                 output_lines.append(json.dumps(json_object))
             except Exception as e:
-                print(f"ERROR rendering template for record: {record}. Error: {e}")
+                logger.error(f"ERROR rendering template for record: {record}. Error: {e}")
                 output_lines.append(json.dumps({"error": str(e), "source_record": record}))
 
         full_output_text = "\n".join(output_lines)
@@ -85,7 +90,7 @@ class Jinja2Transformer:
         # Use StorageAdapter to write the final text file to local or S3
         storage_adapter.write_text(full_output_text, output_path)
 
-        print(f"Transformation of {len(records)} records complete. Output: '{output_path}'.")
+        logger.info(f"Transformation of {len(records)} records complete. Output: '{output_path}'.")
         output_container = DataContainer()
         output_container.add_file_path(output_path)
         return output_container

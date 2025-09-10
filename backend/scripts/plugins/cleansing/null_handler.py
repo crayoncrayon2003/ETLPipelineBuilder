@@ -1,8 +1,14 @@
-from typing import Dict, Any, Optional
+import os
 import pluggy
+from typing import Dict, Any, Optional
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -43,7 +49,7 @@ class NullHandler:
         df = storage_adapter.read_df(input_path)
 
         initial_null_counts = df.isnull().sum().sum()
-        print(f"Initial total nulls: {initial_null_counts}")
+        logger.info(f"Initial total nulls: {initial_null_counts}")
 
         processed_df = df.copy()
         if strategy == 'drop_row':
@@ -54,7 +60,7 @@ class NullHandler:
             raise ValueError(f"Unsupported strategy: '{strategy}'.")
 
         final_null_counts = processed_df.isnull().sum().sum()
-        print(f"Null handling complete. Final nulls: {final_null_counts}. Saving to '{output_path}'.")
+        logger.info(f"Null handling complete. Final nulls: {final_null_counts}. Saving to '{output_path}'.")
 
         storage_adapter.write_df(processed_df, output_path)
 

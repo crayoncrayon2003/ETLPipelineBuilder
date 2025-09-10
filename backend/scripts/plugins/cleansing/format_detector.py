@@ -1,11 +1,18 @@
+import os
+import pluggy
 import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil, tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
-import pluggy
+
 
 from core.data_container.container import DataContainer
 from core.data_container.formats import SupportedFormats
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -77,7 +84,7 @@ class FormatDetector:
 
             return SupportedFormats.TEXT
         except Exception as e:
-            print(f"Error during format detection for {file_path}: {e}")
+            logger.error(f"Error during format detection for {file_path}: {e}")
             return SupportedFormats.UNKNOWN
 
     @hookimpl
@@ -94,7 +101,7 @@ class FormatDetector:
         detected_format = SupportedFormats.UNKNOWN
 
         #  Download file content (or read local) into memory, then write to temporary local file for inspection
-        print(f"Reading '{input_path}' content for format detection...")
+        logger.info(f"Reading '{input_path}' content for format detection...")
         try:
             file_content_bytes = storage_adapter.read_bytes(input_path)
 
@@ -104,15 +111,15 @@ class FormatDetector:
 
                 # Detect format on the local temporary file
                 detected_format = self._detect_format(temp_input_path, read_chunk_size)
-                print(f" -> Detected format: {detected_format.value}")
+                logger.info(f" -> Detected format: {detected_format.value}")
 
         except Exception as e:
-            print(f"Failed to process file '{input_path}' for format detection: {e}")
+            logger.error(f"Failed to process file '{input_path}' for format detection: {e}")
             raise
 
         # This plugin is non-destructive, so copy the original file to the output path
         # storage_adapter.copy_file は input_path が S3でもlocalでも対応する
-        print(f"Format detection complete. Copying original file to '{output_path}'.")
+        logger.info(f"Format detection complete. Copying original file to '{output_path}'.")
         storage_adapter.copy_file(input_path, output_path)
 
         output_container = DataContainer()

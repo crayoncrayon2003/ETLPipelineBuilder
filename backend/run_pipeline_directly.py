@@ -9,8 +9,13 @@ if str(scripts_path) not in sys.path:
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer
 
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
+
 def main():
-    print("--- Starting direct pipeline execution ---")
+    logger.info("--- Starting direct pipeline execution ---")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     working_dir = os.path.join(script_dir, "..", "test", "data")
@@ -30,7 +35,7 @@ def main():
 
 
     try:
-        print("\n[Step 1: from_http]")
+        logger.info("[Step 1: from_http]")
         http_params = {
             "url": "http://localhost:8080/device_data.csv",
             "output_path": http_output_file
@@ -42,7 +47,7 @@ def main():
         )
 
 
-        print("\n[Step 2: with_duckdb]")
+        logger.info("[Step 2: with_duckdb]")
         duckdb_params = {
             "input_path": http_result_container.get_primary_file_path(),
             "output_path": duckdb_output_file,
@@ -56,7 +61,7 @@ def main():
         )
 
 
-        print("\n[Step 3: with_jinja2]")
+        logger.info("[Step 3: with_jinja2]")
         jinja2_params = {
             "input_path": duckdb_result_container.get_primary_file_path(),
             "output_path": jinja2_output_file,
@@ -68,10 +73,10 @@ def main():
             inputs={"input_data": duckdb_result_container}
         )
 
-        print("\n--- Pipeline execution finished successfully! ---")
+        logger.info("--- Pipeline execution finished successfully! ---")
 
     except Exception as e:
-        print(f"\n--- An error occurred during pipeline execution ---")
+        logger.error(f"\n--- An error occurred during pipeline execution ---")
         import traceback
         traceback.print_exc()
 

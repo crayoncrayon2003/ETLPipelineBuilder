@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 from pathlib import Path
@@ -15,6 +16,11 @@ from typing import Dict, Any, Optional, List
 from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 _node_results_cache: Dict[str, Any] = {}
 @task(name="Batch Step Runner")
@@ -61,7 +67,7 @@ def run_pipeline_from_file(config_file_path: str):
     """
     # The path is now expected to be an absolute path.
     path = Path(config_file_path)
-    print(f"Loading pipeline definition from absolute path: {path}")
+    logger.info(f"Loading pipeline definition from absolute path: {path}")
 
     if not path.exists():
         raise FileNotFoundError(f"Pipeline definition file not found: {path}")
@@ -71,12 +77,12 @@ def run_pipeline_from_file(config_file_path: str):
 
     pipeline_def = PipelineDefinition(**data)
 
-    print(f"Starting batch pipeline run for: {pipeline_def.name}")
+    logger.info(f"Starting batch pipeline run for: {pipeline_def.name}")
     _node_results_cache.clear()
     nodes_map = {node.id: node for node in pipeline_def.nodes}
     for node_id in nodes_map:
         _submit_node_task_batch(node_id, nodes_map, pipeline_def.edges, project_root)
-    print(f"Pipeline '{pipeline_def.name}' submitted for execution.")
+    logger.info(f"Pipeline '{pipeline_def.name}' submitted for execution.")
 
 
 def main():

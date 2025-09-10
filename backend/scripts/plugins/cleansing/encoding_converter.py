@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
@@ -6,6 +7,11 @@ import tempfile
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -50,12 +56,12 @@ class EncodingConverter:
 
             result = charset_normalizer.from_bytes(raw_data).best()
             if result and result.encoding:
-                print(f"Detected encoding for '{file_path.name}': {result.encoding} (confidence: {result.confidence:.2f})")
+                logger.info(f"Detected encoding for '{file_path.name}': {result.encoding} (confidence: {result.confidence:.2f})")
                 return result.encoding
-            print(f"Warning: Could not confidently detect encoding for '{file_path.name}'. Defaulting to 'latin-1'.")
+            logger.info(f"Warning: Could not confidently detect encoding for '{file_path.name}'. Defaulting to 'latin-1'.")
             return 'latin-1'
         except Exception as e:
-            print(f"Error during encoding detection for '{file_path.name}': {e}. Defaulting to 'latin-1'.")
+            logger.error(f"Error during encoding detection for '{file_path.name}': {e}. Defaulting to 'latin-1'.")
             return 'latin-1'
 
     @hookimpl
@@ -75,7 +81,7 @@ class EncodingConverter:
             temp_input_path = Path(temp_dir) / "input_file_for_conversion"
 
             # 1. Read file content (local or S3) as bytes using StorageAdapter
-            print(f"Reading '{input_path}' content for encoding conversion using StorageAdapter...")
+            logger.info(f"Reading '{input_path}' content for encoding conversion using StorageAdapter...")
             try:
                 file_content_bytes = storage_adapter.read_bytes(input_path)
                 temp_input_path.write_bytes(file_content_bytes)
@@ -87,7 +93,7 @@ class EncodingConverter:
             if not source_enc:
                 source_enc = self._detect_encoding(temp_input_path, encoding_detection_sample_size)
 
-            print(f"Processing file from '{input_path}' (detected/provided encoding: {source_enc}) "
+            logger.info(f"Processing file from '{input_path}' (detected/provided encoding: {source_enc}) "
                   f"to '{output_path}' (target encoding: {target_encoding}).")
 
             # 3. Perform encoding conversion
@@ -97,7 +103,7 @@ class EncodingConverter:
                 # 4. Use StorageAdapter to write the converted content to the final destination
                 storage_adapter.write_text(content, output_path)
             except Exception as e:
-                print(f"ERROR during encoding conversion or writing: {e}")
+                logger.error(f"ERROR during encoding conversion or writing: {e}")
                 raise
 
         output_container = DataContainer()

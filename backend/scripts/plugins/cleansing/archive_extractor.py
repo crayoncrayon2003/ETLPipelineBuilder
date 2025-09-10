@@ -1,3 +1,4 @@
+import os
 import zipfile
 import tarfile
 from pathlib import Path
@@ -7,6 +8,11 @@ import tempfile
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -56,7 +62,7 @@ class ArchiveExtractor:
             local_extraction_dir.mkdir(exist_ok=True)
 
             # --- Step 1: Read the archive content as bytes using StorageAdapter ---
-            print(f"Reading archive '{input_path_str}' using StorageAdapter...")
+            logger.info(f"Reading archive '{input_path_str}' using StorageAdapter...")
             try:
                 archive_content_bytes = storage_adapter.read_bytes(input_path_str)
                 local_archive_path.write_bytes(archive_content_bytes)
@@ -66,7 +72,7 @@ class ArchiveExtractor:
 
             # --- Step 2: Extract the local temporary archive ---
             extracted_files_rel_paths = []
-            print(f"Extracting local archive '{local_archive_path}' to '{local_extraction_dir}'...")
+            logger.info(f"Extracting local archive '{local_archive_path}' to '{local_extraction_dir}'...")
 
             if zipfile.is_zipfile(local_archive_path):
                 with zipfile.ZipFile(local_archive_path, 'r') as zip_ref:
@@ -87,10 +93,10 @@ class ArchiveExtractor:
             output_container = DataContainer()
 
             if not extracted_files_rel_paths:
-                print("No files extracted from the archive.")
+                logger.info("No files extracted from the archive.")
                 return None
 
-            print(f"Uploading {len(extracted_files_rel_paths)} extracted files to '{output_path_str}'...")
+            logger.info(f"Uploading {len(extracted_files_rel_paths)} extracted files to '{output_path_str}'...")
             for rel_path in extracted_files_rel_paths:
                 final_rel_path = rel_path
                 if strip_components > 0:
@@ -98,13 +104,13 @@ class ArchiveExtractor:
                     if len(parts) > strip_components:
                         final_rel_path = Path(*parts[strip_components:])
                     else:
-                        print(f"Warning: Cannot strip {strip_components} components from '{rel_path}'. Skipping stripping.")
+                        logger.info(f"Warning: Cannot strip {strip_components} components from '{rel_path}'. Skipping stripping.")
                         final_rel_path = Path(rel_path.name)
 
                 local_full_path = local_extraction_dir / rel_path
                 final_dest_path = f"{output_path_str.rstrip('/')}/{final_rel_path}"
 
-                print(f"  Uploading '{local_full_path}' to '{final_dest_path}'...")
+                logger.info(f"  Uploading '{local_full_path}' to '{final_dest_path}'...")
                 storage_adapter.upload_local_file(local_full_path, final_dest_path)
                 output_container.add_file_path(final_dest_path)
 

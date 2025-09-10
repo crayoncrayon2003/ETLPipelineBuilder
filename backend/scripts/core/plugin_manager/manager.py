@@ -1,3 +1,4 @@
+import os
 import pluggy
 import pkgutil
 import importlib
@@ -7,6 +8,11 @@ from typing import Dict, Any, Optional
 from . import hooks
 import plugins
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class FrameworkManager:
     """
@@ -40,11 +46,11 @@ class FrameworkManager:
                         plugin_name = instance.get_plugin_name()
                         if plugin_name:
                             if plugin_name in self._plugin_name_cache:
-                                print(f"Warning: Duplicate plugin name '{plugin_name}'.")
+                                logger.info(f"Warning: Duplicate plugin name '{plugin_name}'.")
                             self._plugin_name_cache[plugin_name] = instance
-                            print(f"Discovered and cached plugin: '{plugin_name}'")
+                            logger.info(f"Discovered and cached plugin: '{plugin_name}'")
             except Exception as e:
-                print(f"Failed during discovery in module {modname}: {e}")
+                logger.error(f"Failed during discovery in module {modname}: {e}")
 
     def call_plugin_execute(
         self,

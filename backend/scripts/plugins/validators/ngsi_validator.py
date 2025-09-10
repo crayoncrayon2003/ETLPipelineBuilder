@@ -1,3 +1,4 @@
+import os
 import json
 from typing import Dict, Any, List, Optional
 import pluggy
@@ -5,6 +6,11 @@ from pathlib import Path
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
+
+from utils.logger import setup_logger
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
@@ -78,7 +84,7 @@ class NgsiValidator:
 
     def _read_text_content(self, path: str) -> str:
         """Reads the entire content of a text file from local or S3."""
-        print(f"Reading text content from: {path}")
+        logger.info(f"Reading text content from: {path}")
         if path.startswith("s3://"):
             try:
                 import s3fs
@@ -105,7 +111,7 @@ class NgsiValidator:
         if not input_path or not output_path:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'output_path'.")
 
-        print(f"Validating NGSI-{ngsi_version} entities in file '{input_path}'.")
+        logger.info(f"Validating NGSI-{ngsi_version} entities in file '{input_path}'.")
         all_errors: List[str] = []
 
         content = self._read_text_content(input_path)
@@ -128,7 +134,7 @@ class NgsiValidator:
         if all_errors:
             raise ValueError(f"NGSI validation failed for {len(all_errors)} issues:\n- " + "\n- ".join(all_errors))
 
-        print("NGSI validation successful. Copying file to output path.")
+        logger.info("NGSI validation successful. Copying file to output path.")
         # We use write_text instead of copy_file to ensure consistent content handling
         storage_adapter.write_text(content, output_path)
 
