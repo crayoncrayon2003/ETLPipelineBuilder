@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 
 scripts_path = Path(__file__).resolve().parent / "scripts"
@@ -11,11 +12,14 @@ from core.data_container.container import DataContainer
 def main():
     print("--- Starting direct pipeline execution ---")
 
-    working_dir = Path("../test/data/").resolve()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    working_dir = os.path.join(script_dir, "..", "test", "data")
+    working_dir = os.path.abspath(working_dir)
+    working_dir = Path(working_dir)
 
     http_output_file = working_dir / "Step1" / "device_data.csv"
-    duckdb_output_file = working_dir / "Step3" / "structured_data.parquet"
-    jinja2_output_file = working_dir / "Step5" / "ngsi_entities.json"
+    duckdb_output_file = working_dir / "Step3" / "run_pipeline_directly.parquet"
+    jinja2_output_file = working_dir / "Step5" / "run_pipeline_directly.json"
 
     sql_file = working_dir / "Step2" / "step2.sql"
     j2_template_file = working_dir / "Step4" / "step4.j2"

@@ -4,10 +4,15 @@ import pluggy
 from pathlib import Path
 
 from core.data_container.container import DataContainer
+from core.infrastructure import storage_adapter
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DuckDBTransformer:
+    """
+    (Storage Aware) Transforms data using a SQL query powered by DuckDB.
+    Can read from and write to various formats on local or S3 storage.
+    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "with_duckdb"
@@ -17,41 +22,69 @@ class DuckDBTransformer:
         return {
             "type": "object",
             "properties": {
-                "input_path": {"type": "string", "title": "Input File Path (Optional)"},
-                "output_path": {"type": "string", "title": "Output File Path"},
-                # "query": {"type": "string", "title": "SQL Query", "format": "textarea"},
-                "query_file": {"type": "string", "title": "Query File"},
-                "table_name": {"type": "string", "title": "Table Name for Input", "default": "source_data"}
+                "input_path": {
+                    "type": "string",
+                    "title": "Input File Path (Optional, local/s3)",
+                    "description": "The file to be registered as a table. Not needed if the query reads files directly."
+                },
+                "output_path": {
+                    "type": "string",
+                    "title": "Output File Path (local/s3)",
+                    "description": "Path to save the result of the SQL query."
+                },
+                # "query": {
+                #     "type": "string",
+                #     "title": "SQL Query",
+                #     "description": "The SQL query to execute. Use this or 'Query File'.",
+                #     "format": "textarea"
+                # },
+                "query_file": {
+                    "type": "string",
+                    "title": "Query File Path (local)",
+                    "description": "Local path to a file containing the SQL query."
+                },
+                "table_name": {
+                    "type": "string",
+                    "title": "Table Name for Input",
+                    "description": "The name to use for the input table in the SQL query.",
+                    "default": "source_data"
+                }
             },
             "required": ["output_path"]
         }
 
     def _get_query(self, params: Dict[str, Any]) -> str:
-        if params.get("query"): return params.get("query")
+        """Loads the SQL query from a string or a local file."""
+        if params.get("query"):
+            return params.get("query")
+
         query_file_path = params.get("query_file")
-        if not query_file_path: raise ValueError("Requires 'query' or 'query_file'.")
+        if not query_file_path:
+            raise ValueError("DuckDBTransformer requires either 'query' or 'query_file' parameter.")
+
         try:
-            with open(query_file_path, 'r', encoding='utf-8') as f: return f.read()
-        except FileNotFoundError: raise FileNotFoundError(f"Query file not found: {query_file_path}")
+            # Query files are always read from the local filesystem where the code runs.
+            with open(query_file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Query file not found at: {query_file_path}")
 
     @hookimpl
     def execute_plugin(
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
-        output_path = Path(params.get("output_path"))
+        output_path = str(params.get("output_path"))
         sql_query = self._get_query(params)
-        input_path_str = params.get("input_path")
+        input_path = str(params.get("input_path")) if params.get("input_path") else None
 
         if not output_path:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'output_path'.")
 
-        print(f"Executing DuckDB transformation. Output: '{output_path}'.")
-
         try:
             con = duckdb.connect(database=':memory:')
 
-            if input_path_str:
-                input_path = Path(input_path_str)
+            if input_path:
+                input_path = Path(input_path)
                 if not input_path.exists(): raise FileNotFoundError(f"Input file not found: {input_path}")
                 table_name = params.get("table_name", "source_data")
 
@@ -77,16 +110,9 @@ class DuckDBTransformer:
         finally:
             if 'con' in locals() and con: con.close()
 
-        print(f"Transformation complete. Result has {len(result_df)} rows. Saving to '{output_path}'.")
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_suffix = output_path.suffix.lower()
-        if output_suffix == '.parquet':
-            result_df.to_parquet(output_path, index=False)
-        elif output_suffix == '.csv':
-            result_df.to_csv(output_path, index=False)
-        else:
-            raise ValueError(f"Unsupported output file type for DuckDB plugin: {output_suffix}")
+        # Use the StorageAdapter to write the result, which handles both local and S3.
+        storage_adapter.write_df(result_df, output_path)
+        print(f"Transformation complete. Result with {len(result_df)} rows saved.")
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)

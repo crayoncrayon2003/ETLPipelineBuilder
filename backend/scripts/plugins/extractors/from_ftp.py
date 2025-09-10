@@ -2,12 +2,19 @@ import ftplib
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
+import tempfile
 
+from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class FtpExtractor:
+    """
+    (Storage Aware) Downloads a file from an FTP server.
+    It downloads to a temporary local file first, then uses the StorageAdapter
+    to move it to the final destination (local or S3).
+    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_ftp"
@@ -17,11 +24,32 @@ class FtpExtractor:
         return {
             "type": "object",
             "properties": {
-                "host": {"type": "string", "title": "FTP Host"},
-                "remote_path": {"type": "string", "title": "Remote File Path"},
-                "output_path": {"type": "string", "title": "Output File/Directory Path"},
-                "user": {"type": "string", "title": "Username"},
-                "password": {"type": "string", "title": "Password", "format": "password"}
+                "host": {
+                    "type": "string",
+                    "title": "FTP Host",
+                    "description": "Hostname or IP address of the FTP server."
+                },
+                "remote_path": {
+                    "type": "string",
+                    "title": "Remote File Path",
+                    "description": "The full path to the file on the FTP server."
+                },
+                "output_path": {
+                    "type": "string",
+                    "title": "Output Path (local or s3://)",
+                    "description": "The final destination for the downloaded file."
+                },
+                "user": {
+                    "type": "string",
+                    "title": "Username",
+                    "description": "(Optional) Username for FTP authentication."
+                },
+                "password": {
+                    "type": "string",
+                    "title": "Password",
+                    "description": "(Optional) Password for FTP authentication.",
+                    "format": "password"
+                }
             },
             "required": ["host", "remote_path", "output_path"]
         }
@@ -34,31 +62,37 @@ class FtpExtractor:
         user = params.get("user")
         password = params.get("password")
         remote_path = params.get("remote_path")
-        output_path = params.get("output_path")
+        output_path_str = str(params.get("output_path"))
 
-        if not all([host, remote_path, output_path]):
-            raise ValueError("FtpExtractor requires 'host', 'remote_path', and 'output_path'.")
+        if not all([host, remote_path, output_path_str]):
+            raise ValueError("FtpExtractor requires 'host', 'remote_path', and 'output_path' parameters.")
 
-        final_output_path = output_path
-        if output_path.is_dir():
-            filename = Path(remote_path).name
-            final_output_path = output_path / filename
+        # Use a temporary directory to download the file from FTP
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_temp_path = Path(temp_dir) / Path(remote_path).name
 
-        final_output_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Connecting to FTP server at {host}...")
-        try:
-            with ftplib.FTP(host) as ftp:
-                ftp.login(user=user, passwd=password)
-                print(f"Downloading '{remote_path}' to '{final_output_path}'...")
-                with open(final_output_path, 'wb') as local_file:
-                    ftp.retrbinary(f'RETR {remote_path}', local_file.write)
-                print("File downloaded successfully.")
-        except ftplib.all_errors as e:
-            print(f"FTP operation failed: {e}")
-            if final_output_path.exists(): final_output_path.unlink()
-            raise
+            # Download the file from the FTP server to the temporary local path
+            print(f"Connecting to FTP at {host} to download to temporary storage...")
+            try:
+                with ftplib.FTP(host, timeout=60) as ftp:
+                    ftp.login(user=user, passwd=password)
+                    with open(local_temp_path, 'wb') as f:
+                        ftp.retrbinary(f'RETR {remote_path}', f.write)
+                print(f"Successfully downloaded to temporary location: {local_temp_path}")
+            except ftplib.all_errors as e:
+                print(f"FTP download operation failed: {e}")
+                raise
 
+            # Use the StorageAdapter to move the temporary file to its final destination
+            # This handles both local-to-local copy and local-to-S3 upload.
+            storage_adapter.upload_local_file(local_temp_path, output_path_str)
+
+        # The pipeline continues with the pointer to the final destination path.
         container = DataContainer()
-        container.add_file_path(final_output_path)
-        container.metadata.update({'source_type': 'ftp', 'ftp_host': host, 'remote_path': remote_path})
+        container.add_file_path(output_path_str)
+        container.metadata.update({
+            'source_type': 'ftp',
+            'ftp_host': host,
+            'remote_path': remote_path
+        })
         return container

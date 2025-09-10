@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 import re
 
-from core.secrets.secret_resolver import secret_resolver
+from core.infrastructure.secret_resolver import secret_resolver
 
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer

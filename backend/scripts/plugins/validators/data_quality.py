@@ -1,14 +1,16 @@
 import pandas as pd
 from typing import Dict, Any, List, Optional
 import pluggy
-from pathlib import Path
-import shutil
 
+from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DataQualityValidator:
+    """
+    (Storage Aware) Performs data quality checks on a tabular file from local or S3.
+    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "data_quality"
@@ -18,8 +20,8 @@ class DataQualityValidator:
         return {
             "type": "object",
             "properties": {
-                "input_path": {"type": "string", "title": "Input File Path"},
-                "output_path": {"type": "string", "title": "Output File Path"},
+                "input_path": {"type": "string", "title": "Input File Path (local/s3)"},
+                "output_path": {"type": "string", "title": "Output File Path (local/s3)"},
                 "rules": {
                     "type": "array", "title": "Validation Rules", "items": {
                         "type": "object",
@@ -38,20 +40,23 @@ class DataQualityValidator:
         if col_name not in df.columns: raise KeyError(f"Column '{col_name}' in rule not in DataFrame.")
         series = df[col_name]
         if rule_type == "not_null":
-            if series.isnull().any(): errors.append(f"Column '{col_name}' has null values.")
+            if series.isnull().any(): errors.append(f"Column '{col_name}' has nulls.")
         elif rule_type == "is_unique":
-            if not series.is_unique: errors.append(f"Column '{col_name}' has duplicate values.")
+            if not series.is_unique: errors.append(f"Column '{col_name}' has duplicates.")
         elif rule_type == "in_range":
             min_val, max_val = rule.get('min'), rule.get('max')
-            if not series[(series < min_val) | (series > max_val)].empty: errors.append(f"Column '{col_name}' has values out of range [{min_val}, {max_val}].")
+            out_of_range = series.dropna()
+            if not out_of_range[(out_of_range < min_val) | (out_of_range > max_val)].empty: errors.append(f"Column '{col_name}' has values out of range [{min_val}, {max_val}].")
         elif rule_type == "matches_regex":
             pattern = rule.get('pattern')
             if not pattern: raise ValueError("Rule 'matches_regex' needs 'pattern'.")
-            if not series[~series.astype(str).str.match(pattern, na=False)].empty: errors.append(f"Column '{col_name}' has values not matching regex.")
+            non_matching = series.dropna().astype(str)
+            if not non_matching[~non_matching.str.match(pattern)].empty: errors.append(f"Column '{col_name}' has values not matching regex.")
         elif rule_type == "in_set":
             value_set = set(rule.get('values', []))
             if not value_set: raise ValueError("Rule 'in_set' needs 'values' list.")
-            if not series[~series.isin(value_set)].empty: errors.append(f"Column '{col_name}' has values not in allowed set.")
+            out_of_set = series.dropna()
+            if not out_of_set[~out_of_set.isin(value_set)].empty: errors.append(f"Column '{col_name}' has values not in allowed set.")
         else: errors.append(f"Unknown rule type '{rule_type}'.")
         return errors
 
@@ -59,17 +64,14 @@ class DataQualityValidator:
     def execute_plugin(
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
-        input_path = Path(params.get("input_path"))
-        output_path = Path(params.get("output_path"))
+        input_path = str(params.get("input_path"))
+        output_path = str(params.get("output_path"))
         rules = params.get("rules", [])
 
         if not input_path or not output_path:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'output_path'.")
-        if not input_path.exists(): raise FileNotFoundError(f"Input file not found: {input_path}")
-        if not isinstance(rules, list): raise ValueError("'rules' parameter must be a list.")
 
-        print(f"Reading file '{input_path}' to perform data quality checks...")
-        df = pd.read_parquet(input_path)
+        df = storage_adapter.read_df(input_path)
 
         all_errors: List[str] = []
         for rule in rules:
@@ -82,8 +84,7 @@ class DataQualityValidator:
             raise ValueError(f"Data quality validation failed:\n- " + "\n- ".join(all_errors))
 
         print("Data quality checks passed. Copying file to output path.")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(input_path, output_path)
+        storage_adapter.copy_file(input_path, output_path)
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)

@@ -20,8 +20,8 @@
       "id": "node-with_jinja2-1755308211580",
       "plugin": "with_jinja2",
       "params": {
-        "input_path": "test/data/Step3/device_data.csv",
-        "output_path": "test/data/Step5/device_data.csv",
+        "input_path": "test/data/Step3/run_pipeline_gui.csv",
+        "output_path": "test/data/Step5/run_pipeline_gui.json",
         "template_path": "test/data/Step4/step4.j2"
       },
       "_ui": {
@@ -36,7 +36,7 @@
       "plugin": "with_duckdb",
       "params": {
         "input_path": "test/data/Step1/device_data.csv",
-        "output_path": "test/data/Step3/device_data.csv",
+        "output_path": "test/data/Step3/run_pipeline_gui.csv",
         "query_file": "test/data/Step2/step2.sql",
         "table_name": "source_data"
       },

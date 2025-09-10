@@ -4,11 +4,16 @@ from typing import Dict, Any, Optional
 import pluggy
 from urllib.parse import urlparse
 
+from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class HttpExtractor:
+    """
+    (Storage Aware) Downloads a file from an HTTP(S) source and saves it
+    to a specified destination (local filesystem or S3).
+    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_http"
@@ -18,8 +23,16 @@ class HttpExtractor:
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "title": "Source URL"},
-                "output_path": {"type": "string", "title": "Output File/Directory Path"}
+                "url": {
+                    "type": "string",
+                    "title": "Source URL",
+                    "description": "The URL to download the data file from."
+                },
+                "output_path": {
+                    "type": "string",
+                    "title": "Output File/Directory Path (local or s3://)",
+                    "description": "If a directory is provided, the filename is inferred from the URL."
+                }
             },
             "required": ["url", "output_path"]
         }
@@ -29,31 +42,28 @@ class HttpExtractor:
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
         url = params.get("url")
-        output_path = params.get("output_path") # This is now a Path object
-        method = params.get("method", "GET").upper()
-        request_params = params.get("request_params")
-        headers = params.get("headers")
+        output_path_str = str(params.get("output_path"))
 
-        if not url or not output_path:
+        if not url or not output_path_str:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'url' and 'output_path'.")
 
-        final_output_path = output_path
-        if output_path.is_dir():
+        final_output_path = output_path_str
+        if final_output_path.endswith('/'):
             parsed_url = urlparse(url)
             filename = Path(parsed_url.path).name
             if not filename:
-                raise ValueError("Could not infer filename from URL. Please provide a full file path for output_path.")
-            final_output_path = output_path / filename
+                raise ValueError("Could not infer filename from URL.")
+            final_output_path = final_output_path + filename
 
         print(f"Downloading from '{url}' to '{final_output_path}'...")
         try:
-            with requests.request(method=method, url=url, params=request_params, headers=headers, stream=True, timeout=60) as response:
+            with requests.get(url=url, timeout=60) as response:
                 response.raise_for_status()
-                final_output_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(final_output_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            print("File downloaded successfully.")
+                # Use the storage adapter to write the downloaded bytes.
+                # It will automatically handle local vs. S3 paths.
+                storage_adapter.write_bytes(response.content, final_output_path)
+
+            print("File downloaded and saved successfully.")
         except requests.RequestException as e:
             print(f"HTTP request failed: {e}")
             raise

@@ -1,15 +1,18 @@
-import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil
+import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil, tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
-
 import pluggy
 
 from core.data_container.container import DataContainer
 from core.data_container.formats import SupportedFormats
+from core.infrastructure import storage_adapter
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class FormatDetector:
+    """
+    (Storage Aware) Detects the format of a file (local or S3) and passes it through.
+    """
     @hookimpl
     def get_plugin_name(self) -> str:
         return "format_detector"
@@ -19,72 +22,100 @@ class FormatDetector:
         return {
             "type": "object",
             "properties": {
-                "input_path": {
-                    "type": "string",
-                    "title": "Input File Path",
-                    "description": "The file whose format will be detected."
-                },
-                "output_path": {
-                    "type": "string",
-                    "title": "Output File Path",
-                    "description": "Path to copy the file to after detection. The file content is not changed."
+                "input_path": {"type": "string", "title": "Input File Path (local/s3)"},
+                "output_path": {"type": "string", "title": "Output File Path (local/s3)"},
+                "read_chunk_size": { # read_chunk_sizeもスキーマに追加
+                    "type": "integer",
+                    "title": "Read Chunk Size for Detection",
+                    "default": 4096,
+                    "description": "Number of bytes to read from the file start for format detection."
                 }
             },
             "required": ["input_path", "output_path"]
         }
 
     def _detect_format(self, file_path: Path, read_chunk_size: int) -> SupportedFormats:
+        # This helper works on a local file path
         try:
-            if zipfile.is_zipfile(file_path): return SupportedFormats.ZIP
-            if tarfile.is_tarfile(file_path): return SupportedFormats.TAR
+            if file_path.stat().st_size == 0:
+                return SupportedFormats.UNKNOWN
 
             with open(file_path, 'rb') as f:
                 chunk = f.read(read_chunk_size)
 
+            # detect BINARY
             try:
                 text_chunk = chunk.decode('utf-8').lstrip()
             except UnicodeDecodeError:
                 return SupportedFormats.BINARY
 
+            # detect JSON
             if text_chunk.startswith(('{', '[')):
-                try: json.loads(text_chunk); return SupportedFormats.JSON
-                except json.JSONDecodeError: pass
+                try:
+                    if '\n' in text_chunk:
+                        json.loads(text_chunk.split('\n')[0].strip())
+                    else:
+                        json.loads(text_chunk)
+                    return SupportedFormats.JSON
+                except json.JSONDecodeError:
+                    pass
 
+            # detect XML
             if text_chunk.startswith('<'):
-                try: ET.fromstring(text_chunk); return SupportedFormats.XML
-                except ET.ParseError: pass
+                try:
+                    ET.fromstring(text_chunk); return SupportedFormats.XML
+                except ET.ParseError:
+                    pass
 
-            try:
-                csv.Sniffer().sniff(text_chunk, delimiters=',;\t|'); return SupportedFormats.CSV
-            except csv.Error: pass
+            # detect CSV
+            if len(text_chunk) > 100:
+                try:
+                    csv.Sniffer().sniff(text_chunk, delimiters=',;\t|')
+                    return SupportedFormats.CSV
+                except csv.Error:
+                    pass
 
             return SupportedFormats.TEXT
         except Exception as e:
-            print(f"Could not access or read file {file_path} for format detection: {e}")
+            print(f"Error during format detection for {file_path}: {e}")
             return SupportedFormats.UNKNOWN
 
     @hookimpl
     def execute_plugin(
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
-        input_path = Path(params.get("input_path"))
-        output_path = Path(params.get("output_path"))
+        input_path = str(params.get("input_path"))
+        output_path = str(params.get("output_path"))
         read_chunk_size = params.get("read_chunk_size", 4096)
 
         if not input_path or not output_path:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'output_path' parameters.")
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found at: {input_path}")
+            raise ValueError("Plugin requires 'input_path' and 'output_path'.")
 
-        print(f"Detecting format for: {input_path.name}")
-        detected_format = self._detect_format(input_path, read_chunk_size)
-        print(f" -> Detected format: {detected_format.value}")
+        detected_format = SupportedFormats.UNKNOWN
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(input_path, output_path)
+        #  Download file content (or read local) into memory, then write to temporary local file for inspection
+        print(f"Reading '{input_path}' content for format detection...")
+        try:
+            file_content_bytes = storage_adapter.read_bytes(input_path)
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_input_path = Path(temp_dir) / "input_file_to_detect"
+                temp_input_path.write_bytes(file_content_bytes)
+
+                # Detect format on the local temporary file
+                detected_format = self._detect_format(temp_input_path, read_chunk_size)
+                print(f" -> Detected format: {detected_format.value}")
+
+        except Exception as e:
+            print(f"Failed to process file '{input_path}' for format detection: {e}")
+            raise
+
+        # This plugin is non-destructive, so copy the original file to the output path
+        # storage_adapter.copy_file は input_path が S3でもlocalでも対応する
+        print(f"Format detection complete. Copying original file to '{output_path}'.")
+        storage_adapter.copy_file(input_path, output_path)
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)
         output_container.metadata['detected_format'] = detected_format.value
-
         return output_container
