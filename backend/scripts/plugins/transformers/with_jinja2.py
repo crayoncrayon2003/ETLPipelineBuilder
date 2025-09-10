@@ -54,7 +54,7 @@ class Jinja2Transformer:
     ) -> Optional[DataContainer]:
         input_path = str(params.get("input_path"))
         output_path = str(params.get("output_path"))
-        template_path = str(params.get("template_path")) # Template is always local
+        template_path = str(params.get("template_path"))
 
         if not all([input_path, output_path, template_path]):
             raise ValueError("Plugin requires 'input_path', 'output_path', and 'template_path'.")

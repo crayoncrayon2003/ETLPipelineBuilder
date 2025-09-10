@@ -3,9 +3,10 @@ import duckdb
 from typing import Dict, Any, Optional
 import pluggy
 from pathlib import Path
+import pandas as pd
 
 from core.data_container.container import DataContainer
-from core.infrastructure import storage_adapter
+from core.infrastructure.storage_adapter import storage_adapter
 
 from utils.logger import setup_logger
 
@@ -20,7 +21,8 @@ hookimpl = pluggy.HookimplMarker("etl_framework")
 class DuckDBTransformer:
     """
     (Storage Aware) Transforms data using a SQL query powered by DuckDB.
-    Can read from and write to various formats on local or S3 storage.
+    Reads input data into a pandas DataFrame using StorageAdapter,
+    then registers it with DuckDB for transformation.
     """
     @hookimpl
     def get_plugin_name(self) -> str:
@@ -33,24 +35,24 @@ class DuckDBTransformer:
             "properties": {
                 "input_path": {
                     "type": "string",
-                    "title": "Input File Path (Optional, local/s3)",
-                    "description": "The file to be registered as a table. Not needed if the query reads files directly."
+                    "title": "Input File Path (local/s3)",
+                    "description": "The file to be read by StorageAdapter and registered as a table in DuckDB."
+                },
+                "input_encoding": {
+                    "type": "string",
+                    "title": "Input File Encoding",
+                    "description": "The character encoding of the input file (e.g., 'utf-8', 'shift_jis', 'cp932', 'latin1').",
+                    "default": "utf-8"
                 },
                 "output_path": {
                     "type": "string",
                     "title": "Output File Path (local/s3)",
                     "description": "Path to save the result of the SQL query."
                 },
-                # "query": {
-                #     "type": "string",
-                #     "title": "SQL Query",
-                #     "description": "The SQL query to execute. Use this or 'Query File'.",
-                #     "format": "textarea"
-                # },
                 "query_file": {
                     "type": "string",
-                    "title": "Query File Path (local)",
-                    "description": "Local path to a file containing the SQL query."
+                    "title": "Query File Path (local/s3)",
+                    "description": "Path to a file containing the SQL query. Can be local or S3."
                 },
                 "table_name": {
                     "type": "string",
@@ -59,7 +61,7 @@ class DuckDBTransformer:
                     "default": "source_data"
                 }
             },
-            "required": ["output_path"]
+            "required": ["input_path", "output_path", "query_file"]
         }
 
     def _get_query(self, path: str) -> str:
@@ -71,41 +73,45 @@ class DuckDBTransformer:
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
         input_path = str(params.get("input_path"))
+        input_encoding = str(params.get("input_encoding", "utf-8"))
         output_path = str(params.get("output_path"))
         query_path = str(params.get("query_file"))
         table_name = str(params.get("table_name", "source_data"))
 
         sql_query = self._get_query(query_path)
 
+        con = None
         try:
+            logger.info(f"Connecting to in-memory DuckDB database.")
             con = duckdb.connect(database=':memory:')
-            con.execute("INSTALL httpfs;")
-            con.execute("LOAD httpfs;")
-            con.execute("CREATE SECRET s3_access_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN, CHAIN 'config', REGION 'ap-northeast-1');")
 
-            if input_path:
-                read_expr = f"read_csv_auto('{input_path}')" if input_path.endswith('.csv') \
-                    else f"read_parquet('{input_path}')" if input_path.endswith('.parquet') \
-                    else f"read_json_auto('{input_path}')" if input_path.endswith('.json') or input_path.endswith('.jsonl') \
-                    else None
+            # DuckDB's S3-related extensions are not required.
+            # con.execute("INSTALL httpfs;")
+            # con.execute("LOAD httpfs;")
+            # con.execute("CREATE SECRET s3_access_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN, CHAIN 'config', REGION 'ap-northeast-1');")
 
-                if not read_expr:
-                    raise ValueError(f"Unsupported file type for input: {input_path}")
+            logger.info(f"Loading input file '{input_path}' into pandas DataFrame using StorageAdapter.")
+            input_df: pd.DataFrame = storage_adapter.read_df(input_path, read_options={"encoding": input_encoding})
 
-                con.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM {read_expr};")
-                logger.info(f"Registered '{Path(input_path).name}' as table '{table_name}'.")
+            # Register as a pandas DataFrame in DuckDB
+            con.register(table_name, input_df)
+            logger.info(f"Registered '{Path(input_path).name}' as table '{table_name}' from in-memory pandas DataFrame ({len(input_df)} rows).")
 
+            logger.info(f"Executing SQL query:\n{sql_query}")
             result_df = con.execute(sql_query).fetch_df()
+            logger.info(f"SQL query executed. Result has {len(result_df)} rows.")
 
         except Exception as e:
-            logger.error(f"ERROR during DuckDB transformation: {e}")
+            logger.error(f"ERROR during DuckDB transformation: {e}", exc_info=True)
             raise
         finally:
-            if 'con' in locals() and con: con.close()
+            if con:
+                con.close()
+                logger.info("DuckDB connection closed.")
 
-        # Use the StorageAdapter to write the result, which handles both local and S3.
+        # Output the result using the StorageAdapter
         storage_adapter.write_df(result_df, output_path)
-        logger.info(f"Transformation complete. Result with {len(result_df)} rows saved.")
+        logger.info(f"Transformation complete. Result saved to '{output_path}'.")
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)

@@ -216,21 +216,31 @@ Configure the following in AWS. ex.Glue
 * Python library path            : s3://<bucket_name>/lib/<name>.whl
 
 Sample code for Glue Python Shell
-```
-import os
-from pathlib import Path
-import boto3
 
+```
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer
 
 http_params = {
-    "url": "https://<bucket_name>/device_data.csv",
+    "url": "https://<sample.com>/device_data.csv",
     "output_path": "s3://<bucket_name>/device_data.csv"
 }
 http_result_container = framework_manager.call_plugin_execute(
     plugin_name="from_http",
     params=http_params,
     inputs={}
+)
+
+duckdb_params = {
+    "input_path": "s3://<bucket_name>/device_data.csv",
+    "input_encoding": "cp932",
+    "output_path": "s3://<bucket_name>/run_pipeline_directly.parquet",
+    "query_file": "s3://<bucket_name>/step2.sql",
+    "table_name": "source_data"
+}
+duckdb_result_container = framework_manager.call_plugin_execute(
+    plugin_name="with_duckdb",
+    params=duckdb_params,
+    inputs={"input_data": http_result_container}
 )
 ```
