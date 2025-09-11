@@ -11,7 +11,7 @@ class DataContainer:
     ):
         self.data: Optional[pd.DataFrame] = data
         self.metadata: Dict[str, Any] = metadata or {}
-        self.file_paths: List[Path] = []
+        self.file_paths: List[str] = []
 
     def __repr__(self) -> str:
         data_shape = self.data.shape if self.data is not None else "N/A (file-based)"
@@ -21,13 +21,13 @@ class DataContainer:
     # def add_file_path(self, path: str | Path):
     def add_file_path(self, path: Union[str, Path]):
         """Adds a file path associated with the data in this container."""
-        self.file_paths.append(Path(path))
+        self.file_paths.append(str(path))
 
-    def get_file_paths(self) -> List[Path]:
+    def get_file_paths(self) -> List[str]:
         """Returns the list of all file paths in the container."""
         return self.file_paths
 
-    def get_primary_file_path(self) -> Path:
+    def get_primary_file_path(self) -> str:
         """
         Returns the first file path in the list.
         Raises an error if the list is empty.

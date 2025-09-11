@@ -1,6 +1,5 @@
 import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pathlib import Path
 import json
 
 # Import the specific Pydantic model directly from its source file.
@@ -14,27 +13,24 @@ logger = setup_logger(__name__, level=log_level)
 
 # The project root is determined here to resolve paths for saving definition files.
 # It assumes this file is at backend/scripts/api/routers/pipelines.py
-project_root = Path(__file__).resolve().parents[3]
-
-# Create a new router instance for pipeline-related endpoints.
-router = APIRouter(
-    prefix="/pipelines",
-    tags=["Pipelines"],
-)
+current_file_path = os.path.abspath(__file__)
+project_root = current_file_path
+for _ in range(3):
+    project_root = os.path.dirname(project_root)
 
 # Define a standardized directory for storing pipeline JSON definitions.
-PIPELINE_DEFINITIONS_DIR = project_root / "data" / "pipeline_definitions"
-PIPELINE_DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
+PIPELINE_DEFINITIONS_DIR = os.path.join(project_root, "data", "pipeline_definitions")
+os.makedirs(PIPELINE_DEFINITIONS_DIR, exist_ok=True)
 
 
-def _save_pipeline_definition(pipeline_def: PipelineDefinition) -> Path:
+def _save_pipeline_definition(pipeline_def: PipelineDefinition) -> str:
     """
     Helper function to save a pipeline definition to a standardized JSON file.
     This file can be used for batch execution or auditing.
     """
     # Create a filename-safe version of the pipeline name.
     safe_name = "".join(c if c.isalnum() else "_" for c in pipeline_def.name)
-    file_path = PIPELINE_DEFINITIONS_DIR / f"{safe_name}.json"
+    file_path = os.path.join(PIPELINE_DEFINITIONS_DIR, f"{safe_name}.json")
 
     # Use the Pydantic model's `model_dump_json` for clean serialization.
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -42,6 +38,12 @@ def _save_pipeline_definition(pipeline_def: PipelineDefinition) -> Path:
 
     logger.info(f"Pipeline definition saved to: {file_path}")
     return file_path
+
+
+router = APIRouter(
+    prefix="/pipelines",
+    tags=["Pipelines"],
+)
 
 
 @router.post("/run", status_code=202)
@@ -68,5 +70,3 @@ async def run_pipeline(
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start pipeline run: {e}")
-
-

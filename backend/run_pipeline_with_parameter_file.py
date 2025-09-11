@@ -1,14 +1,13 @@
 import os
 import sys
 import argparse
-from pathlib import Path
 import json
 
-scripts_path = Path(__file__).resolve().parent / "scripts"
-if str(scripts_path) not in sys.path:
-    sys.path.append(str(scripts_path))
+scripts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
+if scripts_path not in sys.path:
+    sys.path.append(scripts_path)
 
-project_root = Path(__file__).resolve().parents[1]
+project_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from prefect import flow, task
 from typing import Dict, Any, Optional, List
@@ -23,6 +22,7 @@ log_level = os.getenv("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
 
 _node_results_cache: Dict[str, Any] = {}
+
 @task(name="Batch Step Runner")
 def execute_step_batch_task(
     step_name: str, plugin_name: str, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]] = None
@@ -32,16 +32,16 @@ def execute_step_batch_task(
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
     return step_executor.execute_step(step_config, inputs)
 
-def _normalize_path_for_batch(path_str: str, project_root_dir: Path) -> Path:
-    path_obj = Path(path_str)
-    if not path_obj.is_absolute():
-        return project_root_dir / path_obj
-    return path_obj
+def _normalize_path_for_batch(path_str: str, project_root_dir: str) -> str:
+    if not os.path.isabs(path_str):
+        return os.path.join(project_root_dir, path_str)
+    return path_str
 
 def _submit_node_task_batch(
-    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root_dir: Path
+    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root_dir: str
 ):
-    if node_id in _node_results_cache: return _node_results_cache[node_id]
+    if node_id in _node_results_cache:
+        return _node_results_cache[node_id]
     node_def = nodes_map[node_id]
     upstream_inputs = {}
     for edge in edges:
@@ -65,11 +65,10 @@ def run_pipeline_from_file(config_file_path: str):
     """
     The main entry point for running a pipeline from a saved JSON file.
     """
-    # The path is now expected to be an absolute path.
-    path = Path(config_file_path)
+    path = config_file_path
     logger.info(f"Loading pipeline definition from absolute path: {path}")
 
-    if not path.exists():
+    if not os.path.exists(path):
         raise FileNotFoundError(f"Pipeline definition file not found: {path}")
 
     with open(path, 'r', encoding='utf-8') as f:
@@ -91,13 +90,11 @@ def main():
     and then triggers the Prefect flow.
     """
 
-    def resolve_path(path_str: str) -> Path:
+    def resolve_path(path_str: str) -> str:
         """ Argparse type for converting a string to a resolved absolute path. """
-        path = Path(path_str)
-        if not path.is_absolute():
-            # Resolve relative paths against the current working directory
-            path = Path.cwd() / path
-        return path.resolve()
+        if not os.path.isabs(path_str):
+            path_str = os.path.join(os.getcwd(), path_str)
+        return os.path.abspath(path_str)
 
     parser = argparse.ArgumentParser(description="ETL Framework Batch Runner.")
     parser.add_argument(
@@ -108,7 +105,7 @@ def main():
     args = parser.parse_args()
 
     # Trigger the Prefect flow with the guaranteed absolute path
-    run_pipeline_from_file(str(args.config_file))
+    run_pipeline_from_file(args.config_file)
 
 
 if __name__ == "__main__":

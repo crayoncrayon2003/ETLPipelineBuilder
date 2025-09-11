@@ -7,7 +7,7 @@
       "plugin": "from_http",
       "params": {
         "url": "http://localhost:8080/device_data.csv",
-        "output_path": "test/data/Step1/device_data.csv"
+        "output_path": "ETLPipelineBuilder/test/data/Step1/device_data.csv"
       },
       "_ui": {
         "position": {
@@ -20,9 +20,9 @@
       "id": "node-with_jinja2-1755308211580",
       "plugin": "with_jinja2",
       "params": {
-        "input_path": "test/data/Step3/run_pipeline_gui.csv",
-        "output_path": "test/data/Step5/run_pipeline_gui.json",
-        "template_path": "test/data/Step4/step4.j2"
+        "input_path": "ETLPipelineBuilder/test/data/Step3/run_pipeline_gui.csv",
+        "output_path": "ETLPipelineBuilder/test/data/Step5/run_pipeline_gui.json",
+        "template_path": "ETLPipelineBuilder/test/data/Step4/step4.j2"
       },
       "_ui": {
         "position": {
@@ -35,9 +35,10 @@
       "id": "node-with_duckdb-1755308214657",
       "plugin": "with_duckdb",
       "params": {
-        "input_path": "test/data/Step1/device_data.csv",
-        "output_path": "test/data/Step3/run_pipeline_gui.csv",
-        "query_file": "test/data/Step2/step2.sql",
+        "input_path": "ETLPipelineBuilder/test/data/Step1/device_data.csv",
+        "input_encoding": "utf-8",
+        "output_path": "ETLPipelineBuilder/test/data/Step3/run_pipeline_gui.csv",
+        "query_file": "ETLPipelineBuilder/test/data/Step2/step2.sql",
         "table_name": "source_data"
       },
       "_ui": {

@@ -1,11 +1,12 @@
 import os
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
-from pathlib import Path
 from typing import Dict, Any, Optional
 import json
 import re
 import base64
+import boto3
+from botocore.exceptions import ClientError
 
 from utils.logger import setup_logger
 
@@ -43,9 +44,12 @@ class DotEnvSecretResolver(BaseSecretResolver):
     Supports references like "${env://MY_VARIABLE}".
     """
     def __init__(self):
-        dotenv_path = Path(__file__).resolve().parents[3] / '.env'
+        current_path = os.path.abspath(__file__)
+        for _ in range(3):
+            current_path = os.path.dirname(current_path)
+        dotenv_path = os.path.join(current_path, '.env')
 
-        if dotenv_path.exists():
+        if os.path.exists(dotenv_path):
             logger.info(f"Loading secrets from local .env file: {dotenv_path}")
             load_dotenv(dotenv_path=dotenv_path)
         else:
@@ -64,7 +68,7 @@ class DotEnvSecretResolver(BaseSecretResolver):
 
 
 # ==============================================================================
-#  Resolving secrets via AWS service
+# Resolving secrets via AWS service
 # ==============================================================================
 class AWSSecretResolver(BaseSecretResolver):
     """
@@ -81,14 +85,14 @@ class AWSSecretResolver(BaseSecretResolver):
         self.kms_client = None
 
         try:
-            import boto3
-            from botocore.exceptions import ClientError
+            session = boto3.Session()
+            region = session.region_name or os.getenv("AWS_REGION", "ap-northeast-1")
+            logger.info(f"AWS region used for boto3 clients: {region}")
 
-            self.secretsmanager_client = boto3.client('secretsmanager')
-            self.ssm_client = boto3.client('ssm')
-            self.kms_client = boto3.client('kms')
+            self.secretsmanager_client = boto3.client('secretsmanager',region_name=region)
+            self.ssm_client = boto3.client('ssm',region_name=region)
+            self.kms_client = boto3.client('kms',region_name=region)
             logger.info("AWS Secret Resolver initialized with Secrets Manager, Parameter Store, and KMS clients.")
-
         except ImportError:
             logger.error("Error: boto3 is not installed. AWSSecretResolver cannot be used.")
             self.secretsmanager_client = None
@@ -218,15 +222,37 @@ class AWSSecretResolver(BaseSecretResolver):
 # ==============================================================================
 # Factory
 # ==============================================================================
+def is_running_on_aws() -> bool:
+    try:
+        session = boto3.Session()
+        region = session.region_name or os.getenv("AWS_REGION")
+        if not region:
+            logger.warning("AWS region not found in boto3 session or environment variables.")
+            return False
+
+        sts = session.client("sts", region_name=region)
+        account_id = sts.get_caller_identity().get("Account")
+
+        is_aws_env = any([
+            os.getenv("AWS_LAMBDA_FUNCTION_NAME"),
+            os.getenv("GLUE_VERSION"),
+            os.getenv("AWS_EXECUTION_ENV"),
+            bool(account_id)
+        ])
+
+        return is_aws_env
+    except Exception as e:
+        logger.warning(f"Failed to detect AWS environment: {e}")
+
+    return False
+
+
 def get_secret_resolver() -> BaseSecretResolver:
     """
     Factory function that returns the appropriate secret resolver
     based on the execution environment.
     """
-    is_aws_env = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None or \
-                 os.getenv("GLUE_VERSION") is not None or \
-                 os.getenv("AWS_EXECUTION_ENV") is not None
-
+    is_aws_env = is_running_on_aws()
     if is_aws_env:
         logger.info("AWS environment detected. Using AWSSecretResolver for secret resolution.")
         return AWSSecretResolver()

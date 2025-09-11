@@ -54,6 +54,10 @@ pip install -e .
 ### 3.1.2. Run API Server for FrontEnd App
 Start API Server of BuckEnd App
 ```
+python ./scripts/api/main.py
+```
+or
+```
 uvicorn api.main:app --reload
 ```
 
@@ -185,8 +189,8 @@ Then, configure your plugin parameters using the env:// prefix for local environ
 "params": {
   "url": "http://localhost:8080/device_data.csv",
   "output_path”: “./test/data/Step1/device_data.csv",
-  "username”: ${secrets.env://MY_HTTP_BASIC_USERNAME},
-  "password”: ${secrets.env://MY_HTTP_BASIC_PASSWORD}
+  "username”: "${secrets.env://MY_HTTP_BASIC_USERNAME}",
+  "password”: "${secrets.env://MY_HTTP_BASIC_PASSWORD}"
 }
 ```
 
@@ -201,8 +205,8 @@ Here are examples of how to configure your plugin parameters for AWS environment
 "params": {
   "url": "http://localhost:8080/device_data.csv",
   "output_path": "./test/data/Step1/device_data.csv",
-  "username": ${secrets.aws_secretsmanager://prod/MyApi/credentials@username},
-  "password": ${secrets.aws_secretsmanager://prod/MyApi/credentials@password}
+  "username": "${secrets.aws_secretsmanager://prod/MyApi/credentials@username}",
+  "password": "${secrets.aws_secretsmanager://prod/MyApi/credentials@password}"
 }
 ```
 
@@ -243,23 +247,29 @@ aws s3 cp dist/<name>.whl s3://<bucket_name>/lib/
 Configure the following in AWS. ex.Glue
 * Script path    (default)       : s3://<bucket_name>/scripts/
 * Temporary path (default)       : s3://<bucket_name>/temporary/
-* Python library path            : s3://<bucket_name>/lib/<name>.whl
+* Python library path            : s3://<bucket_name>/lib/<wheelname>.whl
 
 Sample code for Glue Python Shell
 
 ```
-from core.plugin_manager.manager import framework_manager
+from core.pipeline.step_executor import StepExecutor
 from core.data_container.container import DataContainer
+
+step_executor = StepExecutor()
 
 http_params = {
     "url": "https://<sample.com>/device_data.csv",
-    "output_path": "s3://<bucket_name>/device_data.csv"
+    "output_path": "s3://<bucket_name>/device_data2.csv",
+    "username": "${secrets.aws_secretsmanager://<secretsmanager_name>@<key_username>}",
+    "password": "${secrets.aws_secretsmanager://<secretsmanager_name>@<key_password>}"
 }
-http_result_container = framework_manager.call_plugin_execute(
-    plugin_name="from_http",
-    params=http_params,
-    inputs={}
-)
+http_step_config = {
+    "name": "step1",
+    "plugin": "from_http_with_basic_auth",
+    "params": http_params
+}
+http_result_container = step_executor.execute_step(http_step_config, inputs={})
+
 
 duckdb_params = {
     "input_path": "s3://<bucket_name>/device_data.csv",
@@ -268,9 +278,10 @@ duckdb_params = {
     "query_file": "s3://<bucket_name>/step2.sql",
     "table_name": "source_data"
 }
-duckdb_result_container = framework_manager.call_plugin_execute(
-    plugin_name="with_duckdb",
-    params=duckdb_params,
-    inputs={"input_data": http_result_container}
-)
+duckdb_step_config = {
+    "name": "step2_with_duckdb",
+    "plugin": "with_duckdb",
+    "params": duckdb_params
+}
+duckdb_result_container = step_executor.execute_step(duckdb_step_config, inputs={"input_data": http_result_container})
 ```

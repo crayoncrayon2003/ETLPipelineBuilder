@@ -1,6 +1,5 @@
 import os
 import ftplib
-from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
 import tempfile
@@ -73,11 +72,13 @@ class FtpExtractor:
         if not all([host, remote_path, output_path_str]):
             raise ValueError("FtpExtractor requires 'host', 'remote_path', and 'output_path' parameters.")
 
-        # Use a temporary directory to download the file from FTP
-        with tempfile.TemporaryDirectory() as temp_dir:
-            local_temp_path = Path(temp_dir) / Path(remote_path).name
+        # 一時ディレクトリ内のファイル名を remote_path のファイル名から取得
+        filename = os.path.basename(remote_path)
 
-            # Download the file from the FTP server to the temporary local path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_temp_path = os.path.join(temp_dir, filename)
+
+            # FTPサーバーから一時ファイルへダウンロード
             logger.info(f"Connecting to FTP at {host} to download to temporary storage...")
             try:
                 with ftplib.FTP(host, timeout=60) as ftp:
@@ -89,11 +90,10 @@ class FtpExtractor:
                 logger.error(f"FTP download operation failed: {e}")
                 raise
 
-            # Use the StorageAdapter to move the temporary file to its final destination
-            # This handles both local-to-local copy and local-to-S3 upload.
+            # StorageAdapterを使って一時ファイルから最終出力先へ転送
             storage_adapter.upload_local_file(local_temp_path, output_path_str)
 
-        # The pipeline continues with the pointer to the final destination path.
+        # 続くパイプラインで最終出力先を指すDataContainerを返す
         container = DataContainer()
         container.add_file_path(output_path_str)
         container.metadata.update({

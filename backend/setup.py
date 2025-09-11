@@ -6,7 +6,6 @@ def parse_requirements(filename):
     reqs = []
     for line in lines:
         line = line.strip()
-        # 空行やコメント行は無視
         if not line or line.startswith('#'):
             continue
         reqs.append(line)
@@ -14,7 +13,7 @@ def parse_requirements(filename):
 
 setup(
     name="etl_framework_backend",
-    version="1.0.2",
+    version="1.0.3",
     package_dir={"": "scripts"},
     packages=find_packages(where="scripts"),
     install_requires=parse_requirements('requirements.txt'),

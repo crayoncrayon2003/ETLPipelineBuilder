@@ -2,7 +2,6 @@ import os
 import duckdb
 from typing import Dict, Any, Optional
 import pluggy
-from pathlib import Path
 import pandas as pd
 
 from core.data_container.container import DataContainer
@@ -79,23 +78,20 @@ class DuckDBTransformer:
         table_name = str(params.get("table_name", "source_data"))
 
         sql_query = self._get_query(query_path)
+        logger.info(f"input_path : {input_path}")
+        logger.info(f"output_path: {output_path}")
 
         con = None
         try:
             logger.info(f"Connecting to in-memory DuckDB database.")
             con = duckdb.connect(database=':memory:')
 
-            # DuckDB's S3-related extensions are not required.
-            # con.execute("INSTALL httpfs;")
-            # con.execute("LOAD httpfs;")
-            # con.execute("CREATE SECRET s3_access_secret (TYPE S3, PROVIDER CREDENTIAL_CHAIN, CHAIN 'config', REGION 'ap-northeast-1');")
-
-            logger.info(f"Loading input file '{input_path}' into pandas DataFrame using StorageAdapter.")
+            logger.info(f"Loading input file '{os.path.basename(input_path)}' into pandas DataFrame using StorageAdapter.")
             input_df: pd.DataFrame = storage_adapter.read_df(input_path, read_options={"encoding": input_encoding})
 
             # Register as a pandas DataFrame in DuckDB
             con.register(table_name, input_df)
-            logger.info(f"Registered '{Path(input_path).name}' as table '{table_name}' from in-memory pandas DataFrame ({len(input_df)} rows).")
+            logger.info(f"Registered '{os.path.basename(input_path)}' as table '{table_name}' from in-memory pandas DataFrame ({len(input_df)} rows).")
 
             logger.info(f"Executing SQL query:\n{sql_query}")
             result_df = con.execute(sql_query).fetch_df()

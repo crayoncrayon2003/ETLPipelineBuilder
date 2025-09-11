@@ -26,26 +26,25 @@ def execute_step_api_task(
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
     return step_executor.execute_step(step_config, inputs)
 
-def _normalize_path(path_str: str, project_root: Path) -> Path:
+def _normalize_path(path_str: str, project_root: str) -> str:
     """
     Normalizes a path string from various formats to a valid WSL/Linux Path object.
     """
     normalized_str = path_str.replace('\\', '/')
     wsl_match = re.match(r"^//wsl(\$|\.localhost)/[^/]+(/.*)", normalized_str)
     if wsl_match:
-        return Path(wsl_match.group(2))
+        return wsl_match.group(2)
     win_match = re.match(r"^([a-zA-Z]):/", normalized_str)
     if win_match:
         drive = win_match.group(1).lower()
         path_remainder = normalized_str[len(win_match.group(0)):]
-        return Path(f"/mnt/{drive}/{path_remainder}")
-    path_obj = Path(normalized_str)
-    if not path_obj.is_absolute():
-        return project_root / path_obj
-    return path_obj
+        return f"/mnt/{drive}/{path_remainder}"
+    if not os.path.isabs(normalized_str):
+        return os.path.join(project_root, normalized_str)
+    return normalized_str
 
 def _submit_node_task(
-    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root: Path
+    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root: str
 ):
     """
     Recursively submits a node's task to Prefect, resolving paths correctly.
@@ -73,7 +72,7 @@ def _submit_node_task(
     _node_results_cache[node_id] = future
     return future
 
-def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root: Path):
+def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root: str):
     """
     The main service entry point. Dynamically constructs and runs a Prefect flow.
     """

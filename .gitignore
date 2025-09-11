@@ -1,4 +1,5 @@
 /backend/build/
+/backend/data/
 /backend/dist/
 /backend/env/
 /backend/scripts/etl_framework_backend.egg-info/

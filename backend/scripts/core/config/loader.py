@@ -1,6 +1,5 @@
 import os
 import yaml
-from pathlib import Path
 from typing import Dict, Any, Optional, Union
 
 from utils.logger import setup_logger
@@ -11,47 +10,38 @@ logger = setup_logger(__name__, level=log_level)
 class ConfigLoader:
     """
     Loads configuration settings from various sources, primarily YAML files.
-
-    This loader is intended for framework-level or shared configurations,
-    such as database credentials, API keys, or service endpoints, which
-    are distinct from the pipeline-specific step definitions handled by
-    `PipelineParser`.
     """
-    # def __init__(self, config_path: Optional[str | Path] = None):
-    def __init__(self, config_path: Optional[Union[str, Path]] = None):
+
+    def __init__(self, config_path: Optional[Union[str, os.PathLike]] = None):
         """
         Initializes the ConfigLoader.
 
         Args:
-            config_path (Optional[str | Path]): The path to the main
-                configuration file to be loaded.
+            config_path (Optional[str | os.PathLike]): Path to the YAML config file.
         """
-        self.config_path = Path(config_path) if config_path else None
+        self.config_path = os.path.abspath(config_path) if config_path else None
         self._config: Dict[str, Any] = {}
 
     def load(self) -> Dict[str, Any]:
         """
-        Loads the configuration from the specified file path.
-
-        If a path was provided during initialization, this method reads
-        and parses the YAML file.
+        Loads the configuration from the specified YAML file.
 
         Returns:
-            Dict[str, Any]: The loaded configuration as a dictionary.
+            Dict[str, Any]: Loaded configuration dictionary.
 
         Raises:
-            FileNotFoundError: If the config file does not exist.
-            yaml.YAMLError: If there is an error parsing the YAML file.
+            FileNotFoundError: If file does not exist.
+            yaml.YAMLError: If parsing fails.
         """
         if not self.config_path:
             logger.info("Warning: ConfigLoader initialized without a path. No config loaded.")
             return self._config
 
-        if not self.config_path.exists():
+        if not os.path.isfile(self.config_path):
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
 
         try:
-            with self.config_path.open('r', encoding='utf-8') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 self._config = yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
             raise yaml.YAMLError(f"Error parsing configuration file {self.config_path}: {e}")
@@ -60,17 +50,14 @@ class ConfigLoader:
 
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Retrieves a configuration value for a given key.
-
-        This method supports nested keys using dot notation (e.g., 'database.host').
+        Retrieves a configuration value by key (supports nested via dot notation).
 
         Args:
-            key (str): The key of the value to retrieve.
-            default (Any, optional): The default value to return if the key
-                                     is not found. Defaults to None.
+            key (str): Key string (e.g., "database.host").
+            default (Any): Fallback value if key not found.
 
         Returns:
-            Any: The configuration value, or the default if not found.
+            Any: Retrieved value or default.
         """
         if not self._config:
             return default

@@ -1,6 +1,5 @@
 import os
 import requests
-from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
 from urllib.parse import urlparse
@@ -52,9 +51,10 @@ class HttpBasicAuthExtractor:
         final_output_path = output_path_str
         if final_output_path.endswith('/'):
             parsed_url = urlparse(url)
-            filename = Path(parsed_url.path).name
-            if not filename: raise ValueError("Could not infer filename from URL.")
-            final_output_path = final_output_path + filename
+            filename = os.path.basename(parsed_url.path)
+            if not filename:
+                raise ValueError("Could not infer filename from URL.")
+            final_output_path = os.path.join(final_output_path, filename)
 
         logger.info(f"Downloading from '{url}' to '{final_output_path}' using Basic Auth...")
         try:

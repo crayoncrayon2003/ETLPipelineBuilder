@@ -1,9 +1,7 @@
 import os
 import pluggy
 import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil, tempfile
-from pathlib import Path
 from typing import Dict, Any, Optional
-
 
 from core.data_container.container import DataContainer
 from core.data_container.formats import SupportedFormats
@@ -31,7 +29,7 @@ class FormatDetector:
             "properties": {
                 "input_path": {"type": "string", "title": "Input File Path (local/s3)"},
                 "output_path": {"type": "string", "title": "Output File Path (local/s3)"},
-                "read_chunk_size": { # read_chunk_sizeもスキーマに追加
+                "read_chunk_size": {  # read_chunk_sizeもスキーマに追加
                     "type": "integer",
                     "title": "Read Chunk Size for Detection",
                     "default": 4096,
@@ -41,10 +39,10 @@ class FormatDetector:
             "required": ["input_path", "output_path"]
         }
 
-    def _detect_format(self, file_path: Path, read_chunk_size: int) -> SupportedFormats:
-        # This helper works on a local file path
+    def _detect_format(self, file_path: str, read_chunk_size: int) -> SupportedFormats:
+        # This helper works on a local file path (string)
         try:
-            if file_path.stat().st_size == 0:
+            if os.path.getsize(file_path) == 0:
                 return SupportedFormats.UNKNOWN
 
             with open(file_path, 'rb') as f:
@@ -70,7 +68,8 @@ class FormatDetector:
             # detect XML
             if text_chunk.startswith('<'):
                 try:
-                    ET.fromstring(text_chunk); return SupportedFormats.XML
+                    ET.fromstring(text_chunk)
+                    return SupportedFormats.XML
                 except ET.ParseError:
                     pass
 
@@ -100,14 +99,15 @@ class FormatDetector:
 
         detected_format = SupportedFormats.UNKNOWN
 
-        #  Download file content (or read local) into memory, then write to temporary local file for inspection
+        # Download file content (or read local) into memory, then write to temporary local file for inspection
         logger.info(f"Reading '{input_path}' content for format detection...")
         try:
             file_content_bytes = storage_adapter.read_bytes(input_path)
 
             with tempfile.TemporaryDirectory() as temp_dir:
-                temp_input_path = Path(temp_dir) / "input_file_to_detect"
-                temp_input_path.write_bytes(file_content_bytes)
+                temp_input_path = os.path.join(temp_dir, "input_file_to_detect")
+                with open(temp_input_path, "wb") as f:
+                    f.write(file_content_bytes)
 
                 # Detect format on the local temporary file
                 detected_format = self._detect_format(temp_input_path, read_chunk_size)

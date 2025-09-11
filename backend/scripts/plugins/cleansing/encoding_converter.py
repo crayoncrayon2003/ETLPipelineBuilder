@@ -1,9 +1,8 @@
 import os
-from pathlib import Path
-from typing import Dict, Any, Optional
+import tempfile
 import pluggy
 import charset_normalizer
-import tempfile
+from typing import Dict, Any, Optional
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
@@ -15,10 +14,12 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
+
 class EncodingConverter:
     """
     (Storage Aware) Converts the character encoding of a text file from local or S3.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "encoding_converter"
@@ -46,7 +47,7 @@ class EncodingConverter:
             "required": ["input_path", "output_path"]
         }
 
-    def _detect_encoding(self, file_path: Path, sample_size: int) -> str:
+    def _detect_encoding(self, file_path: str, sample_size: int) -> str:
         """
         Detects the encoding of a local file using charset_normalizer.
         """
@@ -55,13 +56,15 @@ class EncodingConverter:
                 raw_data = f.read(sample_size)
 
             result = charset_normalizer.from_bytes(raw_data).best()
+            file_name = os.path.basename(file_path)
+
             if result and result.encoding:
-                logger.info(f"Detected encoding for '{file_path.name}': {result.encoding} (confidence: {result.confidence:.2f})")
+                logger.info(f"Detected encoding for '{file_name}': {result.encoding} (confidence: {result.confidence:.2f})")
                 return result.encoding
-            logger.info(f"Warning: Could not confidently detect encoding for '{file_path.name}'. Defaulting to 'latin-1'.")
+            logger.info(f"Warning: Could not confidently detect encoding for '{file_name}'. Defaulting to 'latin-1'.")
             return 'latin-1'
         except Exception as e:
-            logger.error(f"Error during encoding detection for '{file_path.name}': {e}. Defaulting to 'latin-1'.")
+            logger.error(f"Error during encoding detection for '{file_path}': {e}. Defaulting to 'latin-1'.")
             return 'latin-1'
 
     @hookimpl
@@ -75,32 +78,31 @@ class EncodingConverter:
         encoding_detection_sample_size = params.get("encoding_detection_sample_size", 10000)
 
         if not input_path or not output_path:
-            raise ValueError("Plugin requires 'input_path', 'output_path', and 'strategy'.")
+            raise ValueError("Plugin requires 'input_path' and 'output_path'.")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_input_path = Path(temp_dir) / "input_file_for_conversion"
+            temp_input_path = os.path.join(temp_dir, "input_file_for_conversion")
 
-            # 1. Read file content (local or S3) as bytes using StorageAdapter
+            # Step 1: Read file content as bytes via StorageAdapter
             logger.info(f"Reading '{input_path}' content for encoding conversion using StorageAdapter...")
             try:
                 file_content_bytes = storage_adapter.read_bytes(input_path)
-                temp_input_path.write_bytes(file_content_bytes)
+                with open(temp_input_path, 'wb') as f:
+                    f.write(file_content_bytes)
             except Exception as e:
                 raise IOError(f"Failed to read input file '{input_path}' using StorageAdapter: {e}") from e
 
-            # 2. Determine source encoding
-            source_enc = source_encoding
-            if not source_enc:
-                source_enc = self._detect_encoding(temp_input_path, encoding_detection_sample_size)
+            # Step 2: Detect encoding if not provided
+            source_enc = source_encoding or self._detect_encoding(temp_input_path, encoding_detection_sample_size)
 
             logger.info(f"Processing file from '{input_path}' (detected/provided encoding: {source_enc}) "
-                  f"to '{output_path}' (target encoding: {target_encoding}).")
+                        f"to '{output_path}' (target encoding: {target_encoding}).")
 
-            # 3. Perform encoding conversion
+            # Step 3: Read with source encoding, then write with target encoding
             try:
-                content = temp_input_path.read_text(encoding=source_enc, errors='replace')
+                with open(temp_input_path, 'r', encoding=source_enc, errors='replace') as f:
+                    content = f.read()
 
-                # 4. Use StorageAdapter to write the converted content to the final destination
                 storage_adapter.write_text(content, output_path)
             except Exception as e:
                 logger.error(f"ERROR during encoding conversion or writing: {e}")

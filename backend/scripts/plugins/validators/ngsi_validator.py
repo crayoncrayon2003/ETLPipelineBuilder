@@ -2,7 +2,6 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 import pluggy
-from pathlib import Path
 
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
@@ -14,10 +13,12 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
+
 class NgsiValidator:
     """
     (Storage Aware) Validates NGSI entities in a JSON Lines file from local or S3.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "ngsi_validator"
@@ -73,12 +74,13 @@ class NgsiValidator:
                     errors.append(f"Row {index}: NGSI-v2 attribute '{attr_name}' is missing 'value'.")
 
             elif ngsi_version == 'ld':
-                if attr_value.get('type') not in ['Property', 'Relationship', 'GeoProperty']:
+                attr_type = attr_value.get('type')
+                if attr_type not in ['Property', 'Relationship', 'GeoProperty']:
                     errors.append(f"Row {index}: NGSI-LD attribute '{attr_name}' has an invalid or missing 'type'. Must be one of 'Property', 'Relationship', 'GeoProperty'.")
 
-                key_to_check = 'object' if attr_value.get('type') == 'Relationship' else 'value'
+                key_to_check = 'object' if attr_type == 'Relationship' else 'value'
                 if key_to_check not in attr_value:
-                     errors.append(f"Row {index}: NGSI-LD attribute '{attr_name}' of type '{attr_value.get('type')}' is missing the required '{key_to_check}' key.")
+                    errors.append(f"Row {index}: NGSI-LD attribute '{attr_name}' of type '{attr_type}' is missing the required '{key_to_check}' key.")
 
         return errors
 
@@ -94,10 +96,10 @@ class NgsiValidator:
             except ImportError:
                 raise ImportError("s3fs is required for reading from S3. Please install it.")
         else:
-            p = Path(path)
-            if not p.exists():
-                raise FileNotFoundError(f"Input file not found at local path: {p}")
-            return p.read_text(encoding='utf-8')
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Input file not found at local path: {path}")
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read()
 
     @hookimpl
     def execute_plugin(
@@ -118,24 +120,27 @@ class NgsiValidator:
         lines = content.splitlines()
 
         for i, line in enumerate(lines):
-            if not line.strip(): continue # Skip empty lines
+            if not line.strip():
+                continue  # Skip empty lines
             try:
                 instance = json.loads(line)
             except json.JSONDecodeError:
                 error_msg = f"Row {i+1}: Invalid JSON format."
-                if stop_on_first_error: raise ValueError(error_msg)
-                all_errors.append(error_msg); continue
+                if stop_on_first_error:
+                    raise ValueError(error_msg)
+                all_errors.append(error_msg)
+                continue
 
             entity_errors = self._validate_entity(instance, i + 1, ngsi_version)
             if entity_errors:
-                if stop_on_first_error: raise ValueError("\n".join(entity_errors))
+                if stop_on_first_error:
+                    raise ValueError("\n".join(entity_errors))
                 all_errors.extend(entity_errors)
 
         if all_errors:
             raise ValueError(f"NGSI validation failed for {len(all_errors)} issues:\n- " + "\n- ".join(all_errors))
 
         logger.info("NGSI validation successful. Copying file to output path.")
-        # We use write_text instead of copy_file to ensure consistent content handling
         storage_adapter.write_text(content, output_path)
 
         output_container = DataContainer()

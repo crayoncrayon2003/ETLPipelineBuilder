@@ -1,8 +1,9 @@
 import os
 import json
-from pathlib import Path
 from typing import Dict, Any, List, Optional
-import jsonschema, pandas as pd, pluggy
+import jsonschema
+import pandas as pd
+import pluggy
 
 from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
@@ -19,7 +20,8 @@ class JsonSchemaValidator:
     (Storage Aware) Validates a column in a file (local or S3) against a JSON Schema.
     """
     @hookimpl
-    def get_plugin_name(self) -> str: return "json_schema"
+    def get_plugin_name(self) -> str:
+        return "json_schema"
 
     @hookimpl
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -40,30 +42,36 @@ class JsonSchemaValidator:
     ) -> Optional[DataContainer]:
         input_path = str(params.get("input_path"))
         output_path = str(params.get("output_path"))
-        schema_path = Path(params.get("schema_path"))
+        schema_path = params.get("schema_path")
         target_column = params.get("target_column")
 
         if not all([input_path, output_path, schema_path, target_column]):
             raise ValueError("Plugin requires 'input_path', 'output_path', 'schema_path', 'target_column'.")
-        if not schema_path.exists(): raise FileNotFoundError(f"JSON Schema not found: {schema_path}")
+
+        if not os.path.isfile(schema_path):
+            raise FileNotFoundError(f"JSON Schema not found: {schema_path}")
 
         try:
-            with schema_path.open('r', encoding='utf-8') as f: schema = json.load(f)
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema = json.load(f)
             jsonschema.Draft7Validator.check_schema(schema)
             validator = jsonschema.Draft7Validator(schema)
         except Exception as e:
             raise ValueError(f"Invalid JSON Schema file '{schema_path}': {e}")
 
         df = storage_adapter.read_df(input_path)
-        if target_column not in df.columns: raise KeyError(f"Target column '{target_column}' not found.")
+        if target_column not in df.columns:
+            raise KeyError(f"Target column '{target_column}' not found.")
 
         errors: List[str] = []
         for index, record in df[target_column].items():
             instance = record
             if isinstance(record, str):
-                try: instance = json.loads(record)
+                try:
+                    instance = json.loads(record)
                 except json.JSONDecodeError:
-                    errors.append(f"Row {index}: Invalid JSON string."); continue
+                    errors.append(f"Row {index}: Invalid JSON string.")
+                    continue
 
             validation_errors = sorted(validator.iter_errors(instance), key=lambda e: e.path)
             if validation_errors:

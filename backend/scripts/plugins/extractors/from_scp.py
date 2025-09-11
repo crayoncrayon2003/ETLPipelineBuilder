@@ -1,6 +1,5 @@
 import os
 import paramiko
-from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
 import tempfile
@@ -81,11 +80,14 @@ class ScpExtractor:
         if not password and not key_filepath:
             raise ValueError("ScpExtractor requires either 'password' or 'key_filepath'.")
 
-        # Use a temporary directory to download the file from SCP
-        with tempfile.TemporaryDirectory() as temp_dir:
-            local_temp_path = Path(temp_dir) / Path(remote_path).name
+        def basename(path: str) -> str:
+            # 末尾のスラッシュを削除してからファイル名取得
+            return os.path.basename(path.rstrip('/'))
 
-            # Download the file from the SCP server to the temporary local path
+        # 一時ディレクトリ内の一時ファイルパスを文字列で作成
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_temp_path = os.path.join(temp_dir, basename(remote_path))
+
             ssh_client = None
             try:
                 ssh_client = paramiko.SSHClient()
@@ -97,7 +99,7 @@ class ScpExtractor:
                 )
                 with ssh_client.open_sftp() as sftp:
                     logger.info(f"Downloading '{remote_path}' to temporary location...")
-                    sftp.get(remote_path, str(local_temp_path))
+                    sftp.get(remote_path, local_temp_path)
                 logger.info(f"Successfully downloaded to {local_temp_path}")
             except Exception as e:
                 logger.error(f"SCP download operation failed: {e}")
@@ -106,10 +108,9 @@ class ScpExtractor:
                 if ssh_client:
                     ssh_client.close()
 
-            # Use the StorageAdapter to move the temporary file to its final destination
+            # StorageAdapterを使って一時ファイルを最終出力先へ移動（アップロード）
             storage_adapter.upload_local_file(local_temp_path, output_path_str)
 
-        # The pipeline continues with the pointer to the final destination path.
         container = DataContainer()
         container.add_file_path(output_path_str)
         container.metadata.update({

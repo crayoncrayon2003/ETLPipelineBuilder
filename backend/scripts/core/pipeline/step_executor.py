@@ -62,6 +62,8 @@ class StepExecutor:
         """
         Executes a single pipeline step.
         """
+        logger.debug(f"[StepExecutor] step_config (raw): {step_config}")
+
         plugin_name = step_config.get('plugin')
         params = step_config.get('params', {})
         step_name = step_config.get('name', plugin_name)
@@ -70,6 +72,7 @@ class StepExecutor:
 
         try:
             params_with_secrets = self._resolve_secrets_in_params(params)
+            logger.debug(f"[StepExecutor] Params after secret resolution: {params_with_secrets}")
 
             resolved_params = params_with_secrets.copy()
             if inputs:
@@ -77,6 +80,7 @@ class StepExecutor:
                     if container:
                         param_key = "input_path" if input_name == "input_data" else f"{input_name}_path"
                         file_paths = container.get_file_paths()
+                        logger.debug(f"[StepExecutor] Input '{input_name}' file paths: {file_paths}")
                         if len(file_paths) == 1:
                             resolved_params[param_key] = file_paths[0]
                         elif len(file_paths) > 1:

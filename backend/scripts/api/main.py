@@ -1,11 +1,16 @@
+import os
 import sys
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 # --- Python Path Setup ---
-project_root = Path(__file__).resolve().parents[2]
-scripts_path = project_root / "scripts"
+current_file_path = os.path.abspath(__file__)
+project_root = current_file_path
+for _ in range(2):
+    project_root = os.path.dirname(project_root)
+scripts_path = os.path.join(project_root, "scripts")
+
 if str(scripts_path) not in sys.path:
     sys.path.append(str(scripts_path))
 
@@ -44,3 +49,6 @@ app.include_router(schemas_router, prefix="/api/v1")
 async def read_root():
     """Root endpoint to check API status."""
     return {"status": "ok", "message": "Welcome!"}
+
+if __name__ == "__main__":
+    uvicorn.run("api.main:app", host="127.0.0.1", port=8000, reload=True)

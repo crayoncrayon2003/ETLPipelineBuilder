@@ -1,6 +1,5 @@
 import os
 import ftplib
-from pathlib import Path
 from typing import Dict, Any, Optional
 import pluggy
 import tempfile
@@ -48,24 +47,36 @@ class FtpLoader:
         if not input_path_str or not host:
             raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'host'.")
 
+        def basename(path: str) -> str:
+            return os.path.basename(path.rstrip('/'))
+
+        def split_path_parts(path: str):
+            # 'a/b/c' -> ['a','b','c'], handles leading/trailing slashes
+            parts = []
+            for part in path.strip('/').split('/'):
+                if part:
+                    parts.append(part)
+            return parts
+
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_local_path = Path(temp_dir) / Path(input_path_str).name
+            temp_local_path = os.path.join(temp_dir, basename(input_path_str))
 
             if input_path_str.startswith("s3://"):
                 logger.info(f"Downloading '{input_path_str}' from S3 to temporary location using StorageAdapter...")
                 try:
                     file_content_bytes = storage_adapter.read_bytes(input_path_str)
-                    temp_local_path.write_bytes(file_content_bytes)
+                    with open(temp_local_path, 'wb') as f:
+                        f.write(file_content_bytes)
                     local_file_to_upload = temp_local_path
                 except Exception as e:
                     raise IOError(f"Failed to download file from S3 using StorageAdapter: {e}") from e
             else:
-                local_file_to_upload = Path(input_path_str)
+                local_file_to_upload = input_path_str
 
-            if not local_file_to_upload.exists():
+            if not os.path.isfile(local_file_to_upload):
                 raise FileNotFoundError(f"Input file could not be found or downloaded: {local_file_to_upload}")
 
-            remote_filename = local_file_to_upload.name
+            remote_filename = basename(local_file_to_upload)
             logger.info(f"Connecting to FTP at {host} to upload '{remote_filename}'...")
 
             try:
@@ -76,16 +87,17 @@ class FtpLoader:
                             ftp.cwd(remote_dir)
                         except ftplib.error_perm:
                             logger.error(f"Remote directory '{remote_dir}' not found, attempting to create...")
-                            for part in Path(remote_dir).parts:
-                                if part:
-                                    try:
-                                        ftp.mkd(part)
-                                    except ftplib.error_perm:
-                                        pass
-                                    ftp.cwd(part)
+                            parts = split_path_parts(remote_dir)
+                            for part in parts:
+                                try:
+                                    ftp.mkd(part)
+                                except ftplib.error_perm:
+                                    # すでに存在する可能性あり
+                                    pass
+                                ftp.cwd(part)
                             logger.info(f"Successfully navigated/created to '{remote_dir}'.")
 
-                    logger.info(f"Uploading '{local_file_to_upload.name}' to '{remote_dir}/{remote_filename}'...")
+                    logger.info(f"Uploading '{remote_filename}' to '{remote_dir.rstrip('/')}/{remote_filename}'...")
                     with open(local_file_to_upload, 'rb') as local_file:
                         ftp.storbinary(f'STOR {remote_filename}', local_file)
                 logger.info(f"File '{remote_filename}' uploaded successfully to FTP.")
