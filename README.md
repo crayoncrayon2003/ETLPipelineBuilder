@@ -146,9 +146,10 @@ rm package-lock.json
 ```
 
 ## 3.3. How to Use : Case2 Authentication
-Please refer to the `from_http_with_basic_auth` plugin.
-To access a web server with basic authentication, you must configure the username and password in `from_http_with_basic_auth`.
-For example:
+Please refer to the from_http_with_basic_auth plugin.
+To access a web server with basic authentication, you must configure the username and password within its parameters.
+
+For example, a direct configuration might look like this (though this is not recommended for sensitive information):
 ```
 "params": {
   "url": "http://localhost:8080/device_data.csv",
@@ -158,42 +159,71 @@ For example:
 }
 ```
 
-When running Backend Apps on AWS, you'll face the following issue:
-#1. When testing the pipeline via GUI : You want to verify that the `from_http_with_basic_auth` configuration with authentication credentials can access the web server.
-#2. When running on AWS : You want to set the credentials stored in the secret manager to `from_http_with_basic_auth`.
+When running your Backend Apps, you'll typically encounter two scenarios for managing credentials:
 
-The backend App has a mechanism to solve this issue.
-refer to backend/scripts/core/secrets/secret_resolver.py
 
-When executing #1, define your authentication credentials in backend/.env.
-For example:
-　MY_HTTP_BASIC_USERNAME="testuser"
-　MY_HTTP_BASIC_PASSWORD="local_secret_password_123"
+### Scenario 1: Local Development & Testing via GUI
+You want to verify that the from_http_with_basic_auth configuration with authentication credentials can access the web server during local development or when testing the pipeline via the GUI.
 
-The configuration should be as follows:
+
+### Scenario 2: Deployment on AWS
+You want to securely set credentials stored in AWS Secret Management services (Secrets Manager, Parameter Store, KMS) when running on AWS environments (e.g., AWS Lambda, AWS Glue).
+
+
+The Backend App provides a robust mechanism to handle these scenarios using backend/scripts/core/infrastructure/secret_resolver.py. This resolver automatically determines the execution environment (local or AWS) and fetches secrets from the appropriate source based on explicit prefixes in your configuration.
+
+### How to Configure Credentials:
+Define your authentication credentials. For example:
+```
+MY_HTTP_BASIC_USERNAME="testuser"
+MY_HTTP_BASIC_PASSWORD="local_secret_password_123"
+```
+
+### For Scenario 1 (Local Development):
+Then, configure your plugin parameters using the env:// prefix for local environment variables:
 ```
 "params": {
   "url": "http://localhost:8080/device_data.csv",
   "output_path”: “./test/data/Step1/device_data.csv",
-  "username”: ${secrets.MY_HTTP_BASIC_USERNAME},
-  "password”: ${secrets.MY_HTTP_BASIC_PASSWORD}
+  "username”: ${secrets.env://MY_HTTP_BASIC_USERNAME},
+  "password”: ${secrets.env://MY_HTTP_BASIC_PASSWORD}
 }
 ```
 
-When executing #2, do not use backend/.env.
-The configuration should be as follows:
+### For Scenario 2 (Deployment on AWS):
+Do not use backend/.env. Instead, leverage AWS Secret Management services.
+The secret_resolver supports fetching secrets from AWS Secrets Manager, AWS Systems Manager Parameter Store, and decrypting data with AWS Key Management Service (KMS) using explicit prefixes.
+
+Here are examples of how to configure your plugin parameters for AWS environments:
+
+#### Using AWS Secrets Manager:
 ```
 "params": {
   "url": "http://localhost:8080/device_data.csv",
   "output_path": "./test/data/Step1/device_data.csv",
-  "username": ${secrets.prod/MyApi/credentials@username},
-  "password": ${secrets.prod/MyApi/credentials@password}
+  "username": ${secrets.aws_secretsmanager://prod/MyApi/credentials@username},
+  "password": ${secrets.aws_secretsmanager://prod/MyApi/credentials@password}
 }
 ```
 
-secrets.prod/MyApi/credentials is the secret name in AWS Secrets Manager.
-username/password is the key in the JSON stored in the secret.
+#### Using AWS Systems Manager Parameter Store:
+```
+"params": {
+  "url": "https://service.example.com/info",
+  "output_path": "./output/info.txt",
+  "username": "${secrets.aws_parameterstore:///prod/MyService/HttpUser}",
+  "password": "${secrets.aws_parameterstore:///prod/MyService/HttpPassword?with_decryption=true}"
+}
+```
 
+#### Using AWS Key Management Service (KMS) for decryption:
+```
+"params": {
+  "url": "https://secure-api.example.com/data",
+  "output_path": "./output/secure_data.json",
+  "api_token": "${secrets.aws_kms_decrypt://AQICAHg...[Base64 Encoded Ciphertext]...}"
+}
+```
 
 ## 3.3. How to Use : Case3 AWS
 Run the following command locally

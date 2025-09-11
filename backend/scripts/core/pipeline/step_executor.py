@@ -2,9 +2,10 @@ import os
 import re
 from typing import Dict, Any, Optional
 
-from core.infrastructure.secret_resolver import secret_resolver
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer
+
+from core.infrastructure.secret_resolver import secret_resolver, SecretResolutionError
 
 from utils.logger import setup_logger
 
@@ -22,34 +23,33 @@ class StepExecutor:
         in the parameters dictionary.
         """
         resolved_params = {}
-        # Regex to find patterns like "${secrets.SOME_NAME}"
+
         secret_pattern = re.compile(r"\${secrets\.([^}]+)}")
 
         for key, value in params.items():
             if isinstance(value, str):
-                # Check if the string matches the secret pattern
                 match = secret_pattern.fullmatch(value)
                 if match:
-                    secret_name = match.group(1)
-                    logger.info(f"  Resolving secret: '{secret_name}'...")
-                    resolved_value = secret_resolver.resolve(secret_name)
-                    if resolved_value is None:
-                        raise ValueError(f"Secret '{secret_name}' could not be resolved.")
-                    resolved_params[key] = resolved_value
+                    secret_reference = match.group(1)
+                    logger.info(f"  Resolving secret reference: '{secret_reference}'...")
+                    try:
+                        resolved_value = secret_resolver.resolve(secret_reference)
+                        if resolved_value is None:
+                            raise ValueError(f"Secret reference '{secret_reference}' could not be resolved (returned None). "
+                                             "Please ensure the reference is correct and the secret exists.")
+                        resolved_params[key] = resolved_value
+                    except SecretResolutionError as e:
+                        raise ValueError(f"Error resolving secret '{secret_reference}': {e}") from e
                 else:
-                    # Not a secret, keep the original value
                     resolved_params[key] = value
             elif isinstance(value, dict):
-                # Recurse into nested dictionaries
                 resolved_params[key] = self._resolve_secrets_in_params(value)
             elif isinstance(value, list):
-                 # Recurse into lists
                 resolved_params[key] = [
                     self._resolve_secrets_in_params(item) if isinstance(item, dict) else item
                     for item in value
                 ]
             else:
-                # Not a string, dict, or list, keep the original value
                 resolved_params[key] = value
 
         return resolved_params
