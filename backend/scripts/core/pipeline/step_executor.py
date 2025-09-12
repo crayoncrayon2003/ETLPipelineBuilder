@@ -68,7 +68,7 @@ class StepExecutor:
         params = step_config.get('params', {})
         step_name = step_config.get('name', plugin_name)
 
-        logger.info(f"  Executing step: '{step_name}' using plugin: '{plugin_name}'")
+        logger.info(f"  Executing step: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
 
         try:
             params_with_secrets = self._resolve_secrets_in_params(params)

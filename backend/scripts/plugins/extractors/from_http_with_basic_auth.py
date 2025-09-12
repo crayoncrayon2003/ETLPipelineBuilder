@@ -3,10 +3,10 @@ import requests
 from typing import Dict, Any, Optional
 import pluggy
 from urllib.parse import urlparse
-
+import json
 from core.infrastructure import storage_adapter
 from core.data_container.container import DataContainer
-
+from core.infrastructure.storage_path_utils import normalize_path, is_remote_path, is_local_path
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -40,15 +40,20 @@ class HttpBasicAuthExtractor:
     def execute_plugin(
         self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
     ) -> Optional[DataContainer]:
+        logger.info(f"Received params: {json.dumps(params, indent=2)}")
+
         url = params.get("url")
         output_path_str = str(params.get("output_path"))
         username = params.get("username")
         password = params.get("password")
 
+        logger.info(f"url:'{url}'  output_path_str:'{output_path_str}'")
+
         if not all([url, output_path_str, username, password]):
             raise ValueError("Plugin requires 'url', 'output_path', 'username', and 'password'.")
 
-        final_output_path = output_path_str
+        final_output_path = normalize_path(output_path_str, os.getcwd())
+
         if final_output_path.endswith('/'):
             parsed_url = urlparse(url)
             filename = os.path.basename(parsed_url.path)
@@ -57,6 +62,7 @@ class HttpBasicAuthExtractor:
             final_output_path = os.path.join(final_output_path, filename)
 
         logger.info(f"Downloading from '{url}' to '{final_output_path}' using Basic Auth...")
+
         try:
             with requests.get(url, auth=(username, password), timeout=60) as response:
                 response.raise_for_status()
@@ -67,6 +73,7 @@ class HttpBasicAuthExtractor:
             logger.error(f"HTTP request with Basic Auth failed: {e}")
             raise
 
+        # 成功した場合、DataContainer に結果を返す
         container = DataContainer()
         container.add_file_path(final_output_path)
         container.metadata['source_url'] = url

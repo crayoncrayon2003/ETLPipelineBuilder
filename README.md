@@ -229,7 +229,7 @@ Here are examples of how to configure your plugin parameters for AWS environment
 }
 ```
 
-## 3.3. How to Use : Case3 AWS
+## 3.3. How to Use : Case3 AWS Glue : Hardcoding
 Run the following command locally
 ```
 git clone https://github.com/crayoncrayon2003/ETLPipelineBuilder.git
@@ -285,3 +285,79 @@ duckdb_step_config = {
 }
 duckdb_result_container = step_executor.execute_step(duckdb_step_config, inputs={"input_data": http_result_container})
 ```
+
+## 3.4. How to Use : Case4 AWS Glue : Configurationfile
+Run the following command locally
+```
+git clone https://github.com/crayoncrayon2003/ETLPipelineBuilder.git
+cd ETLPipelineBuilder/backend
+python3.9 -m venv env
+source env/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
+pip install -e .
+python setup.py sdist bdist_wheel
+
+aws s3 cp dist/<name>.whl s3://<bucket_name>/lib/
+```
+
+Configure the following in AWS. ex.Glue
+* Script path    (default)       : s3://<bucket_name>/scripts/
+* Temporary path (default)       : s3://<bucket_name>/temporary/
+* Python library path            : s3://<bucket_name>/lib/<wheelname>.whl
+
+Job parameters
+* --config_file                  : s3://<bucket_name>/config/config.json
+
+Write code in the Glue Python Shell. Refer to ETLPipelineBuilder/backend/run_pipeline_with_parameter_file.py.
+
+sample of config.json
+```
+{
+  "name": "Untitled Pipeline",
+  "schedule": null,
+  "nodes": [
+    {
+      "id": "node-from_http_with_basic_auth-1755308197399",
+      "plugin": "from_http_with_basic_auth",
+      "params": {
+        "url": "https://<sample.com>/device_data.csv",
+        "output_path": "s3://<bucket_name>/device_data2.csv",
+        "username": "${secrets.aws_secretsmanager://<secretsmanager_name>@<key_username>}",
+        "password": "${secrets.aws_secretsmanager://<secretsmanager_name>@<key_password>}"
+      },
+      "_ui": {
+        "position": {
+          "x": 109,
+          "y": 167.5
+        }
+      }
+    },
+    {
+      "id": "node-with_duckdb-1755308214657",
+      "plugin": "with_duckdb",
+      "params": {
+        "input_path": "s3://<bucket_name>/device_data.csv",
+        "input_encoding": "cp932",
+        "output_path": "s3://<bucket_name>/run_pipeline_directly.parquet",
+        "query_file": "s3://<bucket_name>/step2.sql",
+        "table_name": "source_data"
+      },
+      "_ui": {
+        "position": {
+          "x": 367.79300652504367,
+          "y": 276.3360964157011
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_node_id": "node-from_http_with_basic_auth-1755308197399",
+      "target_node_id": "node-with_duckdb-1755308214657",
+      "target_input_name": "input_data"
+    }
+  ]
+}
+```
+
