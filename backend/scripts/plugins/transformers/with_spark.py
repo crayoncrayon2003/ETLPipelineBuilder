@@ -1,19 +1,20 @@
 import os
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import pluggy
-from pyspark import SparkConf
-from pyspark.sql import SparkSession, DataFrame as SparkDataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
 
 from core.data_container.container import DataContainer
 from utils.logger import setup_logger
 from core.infrastructure.storage_adapter import storage_adapter
+from core.infrastructure.spark_session_factory import SparkSessionFactory
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame as SparkDataFrame
 
 
 class SparkTransformer:
@@ -65,26 +66,10 @@ class SparkTransformer:
         logger.info(f"Loading input from: {input_path}")
         logger.info(f"Will write output to: {output_path}")
 
-
+        spark = None
         try:
-            # ###########################
-            # setting spark
-            os.environ["PYSPARK_PYTHON"] = "python3"
-            os.environ["PYSPARK_DRIVER_PYTHON"] = "python3"
-            os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-11-openjdk-amd64"
-
-            conf = SparkConf() \
-                    .setAppName("ETLFrameworkSpark") \
-                    .set("spark.pyspark.driver.python", "/usr/bin/python3.9") \
-                    .set("spark.pyspark.python", "/usr/bin/python3.9") \
-                    .set("spark.executor.memory", "2g") \
-                    .set("spark.driver.memory", "2g") \
-                    .set("spark.executor.cores", "4")
-
-            spark = SparkSession \
-                .builder \
-                .config(conf=conf) \
-                .getOrCreate()
+            # using SparkSessionFactory
+            spark = SparkSessionFactory.get_spark_session()
 
             # Read input via StorageAdapter (pandas DataFrame)
             pandas_df = storage_adapter.read_df(input_path, read_options={"encoding": input_encoding})
@@ -95,7 +80,7 @@ class SparkTransformer:
             logger.info(f"Registered table '{table_name}' with {spark_df.count()} rows.")
 
             # Execute SQL
-            result_df: SparkDataFrame = spark.sql(sql_query)
+            result_df = spark.sql(sql_query)
             logger.info(f"SQL executed. Result has {result_df.count()} rows.")
 
             # Write result
@@ -111,8 +96,8 @@ class SparkTransformer:
             logger.error(f"Error during Spark transformation: {e}", exc_info=True)
             raise
         finally:
-            spark.stop()
-            logger.info("Spark session stopped.")
+            SparkSessionFactory.stop_spark_session()
+            logger.info("Spark session stopped if running locally.")
 
         output_container = DataContainer()
         output_container.add_file_path(output_path)
