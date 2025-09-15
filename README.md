@@ -35,8 +35,15 @@ source env/bin/activate
 ```
 
 ## 2.2. Run
+### 2.2.1. Run Dummy Server
 ```
-(env) python run_pipeline_directly.py
+(env) python test/Server/TestWebServer.py
+```
+
+### 2.2.2. Run Pipeline
+```
+(env) python run_pipeline_directly1.py
+(env) python run_pipeline_directly2.py
 ```
 
 # 3. BuckEnd App with FrontEnd App

@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from typing import Dict, Any, Optional
 import json
 import re
@@ -46,17 +46,24 @@ class DotEnvSecretResolver(BaseSecretResolver):
     Supports references like "${env://MY_VARIABLE}".
     """
     def __init__(self):
-        current_path = os.path.abspath(__file__)
-        for _ in range(3):
-            current_path = os.path.dirname(current_path)
-        dotenv_path = os.path.join(current_path, '.env')
+        # current_path = os.path.abspath(__file__)
+        # for _ in range(4):
+        #     current_path = os.path.dirname(current_path)
+        # dotenv_path = os.path.join(current_path, '.env')
+        #
+        # if os.path.exists(dotenv_path):
+        #     logger.info(f"Loading secrets from local .env file: {dotenv_path}")
+        #     load_dotenv(dotenv_path=dotenv_path)
+        # else:
+        #     logger.info(f"Warning: .env file not found at {dotenv_path}. Will rely on existing environment variables.")
 
-        if os.path.exists(dotenv_path):
+        dotenv_path = find_dotenv()
+        if dotenv_path:
             logger.info(f"Loading secrets from local .env file: {dotenv_path}")
-            load_dotenv(dotenv_path=dotenv_path)
+            load_dotenv(dotenv_path=dotenv_path, override=True)
         else:
-            logger.info(f"Warning: .env file not found at {dotenv_path}. "
-                  "Will rely on existing environment variables.")
+            logger.warning(".env file not found. Will rely on existing environment variables.")
+
 
     def resolve(self, secret_reference: str) -> Optional[str]:
         # 'env://' プレフィックスを想定
