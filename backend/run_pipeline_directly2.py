@@ -30,7 +30,7 @@ def main():
     duckdb_output_file = os.path.join(working_dir, "Step3", "run_pipeline_directly.parquet")
     jinja2_output_file = os.path.join(working_dir, "Step5", "run_pipeline_directly.json")
 
-    sql_file = os.path.join(working_dir, "Step2", "step2.sql")
+    sql_file = os.path.join(working_dir, "Step2", "step2_with_spark.sql")
     j2_template_file = os.path.join(working_dir, "Step4", "step4.j2")
 
     ensure_dir_exists(os.path.dirname(http_output_file))
@@ -60,8 +60,8 @@ def main():
             "table_name": "source_data"
         }
         duckdb_step_config = {
-            "name": "step2_with_duckdb",
-            "plugin": "with_duckdb",
+            "name": "step2_with_spark",
+            "plugin": "with_spark",
             "params": duckdb_params
         }
         duckdb_result_container = step_executor.execute_step(

@@ -30,7 +30,7 @@ cd backend
 python3.9 -m venv env
 source env/bin/activate
 (env) pip install --upgrade pip setuptools wheel
-(env) pip install -r requirements.txt
+(env) python install_requirements.py
 (env) pip install -e .
 ```
 
@@ -47,7 +47,7 @@ cd backend
 python3.9 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+python install_requirements.py
 pip install -e .
 ```
 
@@ -113,7 +113,7 @@ Selecting a plugin will display the plugin parameters on the right side.
 #### Node2 : with_duckdb
 * Source File Path  : ./test/data/Step1/device_data.csv
 * Output File Path  : ./test/data/Step3/run_pipeline_gui.csv
-* SQL    File Path  : ./test/data/Step2/step2.sql
+* SQL    File Path  : ./test/data/Step2/step2_with_duckdb.sql
 
 #### Node3 : with_jinja2
 * Source File Path : ./test/data/Step3/run_pipeline_gui.csv
@@ -237,7 +237,7 @@ cd ETLPipelineBuilder/backend
 python3.9 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+python install_requirements.py
 pip install -e .
 python setup.py sdist bdist_wheel
 
@@ -275,7 +275,7 @@ duckdb_params = {
     "input_path": "s3://<bucket_name>/device_data.csv",
     "input_encoding": "cp932",
     "output_path": "s3://<bucket_name>/run_pipeline_directly.parquet",
-    "query_file": "s3://<bucket_name>/step2.sql",
+    "query_file": "s3://<bucket_name>/step2_with_duckdb.sql",
     "table_name": "source_data"
 }
 duckdb_step_config = {
@@ -294,7 +294,7 @@ cd ETLPipelineBuilder/backend
 python3.9 -m venv env
 source env/bin/activate
 pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+python install_requirements.py
 pip install -e .
 python setup.py sdist bdist_wheel
 
@@ -340,7 +340,7 @@ sample of config.json
         "input_path": "s3://<bucket_name>/device_data.csv",
         "input_encoding": "cp932",
         "output_path": "s3://<bucket_name>/run_pipeline_directly.parquet",
-        "query_file": "s3://<bucket_name>/step2.sql",
+        "query_file": "s3://<bucket_name>/step2_with_duckdb.sql",
         "table_name": "source_data"
       },
       "_ui": {

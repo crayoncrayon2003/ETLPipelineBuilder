@@ -2,6 +2,7 @@
 /backend/data/
 /backend/dist/
 /backend/env/
+/backend/scripts/data/
 /backend/scripts/etl_framework_backend.egg-info/
 /backend/scripts/**/__pycache__/
 

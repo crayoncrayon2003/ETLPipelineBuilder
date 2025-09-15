@@ -38,7 +38,7 @@
         "input_path": "ETLPipelineBuilder/test/data/Step1/device_data.csv",
         "input_encoding": "utf-8",
         "output_path": "ETLPipelineBuilder/test/data/Step3/run_pipeline_gui.csv",
-        "query_file": "ETLPipelineBuilder/test/data/Step2/step2.sql",
+        "query_file": "ETLPipelineBuilder/test/data/Step2/step2_with_duckdb.sql",
         "table_name": "source_data"
       },
       "_ui": {
