@@ -2,11 +2,13 @@ import os
 import zipfile
 import tarfile
 import tempfile
+from typing import Dict, Any
 import pluggy
-from typing import Dict, Any, Optional
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
+
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -14,8 +16,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-
-class ArchiveExtractor:
+class ArchiveExtractor(BasePlugin):
     """
     (Storage Aware) Extracts files from an archive (local or S3) to a
     destination directory (local or S3).
@@ -36,84 +37,82 @@ class ArchiveExtractor:
                     "type": "integer",
                     "title": "Strip Path Components",
                     "default": 0,
-                    "description": "Number of leading path components to strip from extracted files (e.g., 1 to remove top-level directory)."
+                    "description": "Number of leading path components to strip from extracted files."
                 }
             },
             "required": ["input_path", "output_path"]
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        output_path = str(params.get("output_path"))
-        strip_components = params.get("strip_components", 0)
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        output_path = str(self.params.get("output_path"))
+        strip_components = self.params.get("strip_components", 0)
+
+        container = DataContainer()
 
         if not input_path or not output_path:
-            raise ValueError("Plugin requires 'input_path' and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
+            return container
 
         with tempfile.TemporaryDirectory() as temp_dir:
             archive_filename = os.path.basename(input_path)
             local_archive_path = os.path.join(temp_dir, archive_filename)
             local_extraction_dir = os.path.join(temp_dir, "extracted_content")
-
             os.makedirs(local_extraction_dir, exist_ok=True)
 
-            # --- Step 1: Read the archive content as bytes ---
             logger.info(f"Reading archive '{input_path}' using StorageAdapter...")
             try:
                 archive_content_bytes = storage_adapter.read_bytes(input_path)
                 with open(local_archive_path, 'wb') as f:
                     f.write(archive_content_bytes)
             except Exception as e:
-                raise IOError(f"Failed to read archive '{input_path}' using StorageAdapter: {e}") from e
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"Failed to read archive: {str(e)}")
+                return container
 
-            # --- Step 2: Extract the local archive ---
             extracted_files_rel_paths = []
-            logger.info(f"Extracting local archive '{local_archive_path}' to '{local_extraction_dir}'...")
+            logger.info(f"Extracting archive '{local_archive_path}'...")
 
-            if zipfile.is_zipfile(local_archive_path):
-                with zipfile.ZipFile(local_archive_path, 'r') as zip_ref:
-                    zip_ref.extractall(local_extraction_dir)
-                    for name in zip_ref.namelist():
-                        if not name.endswith('/'):
-                            extracted_files_rel_paths.append(name)
-            elif tarfile.is_tarfile(local_archive_path):
-                with tarfile.open(local_archive_path, 'r:*') as tar_ref:
-                    tar_ref.extractall(local_extraction_dir)
-                    for member in tar_ref.getmembers():
-                        if member.isfile():
-                            extracted_files_rel_paths.append(member.name)
-            else:
-                raise ValueError(f"'{input_path}' is not a recognized archive type (zip or tar).")
-
-            # --- Step 3: Upload extracted files to the final destination ---
-            output_container = DataContainer()
+            try:
+                if zipfile.is_zipfile(local_archive_path):
+                    with zipfile.ZipFile(local_archive_path, 'r') as zip_ref:
+                        zip_ref.extractall(local_extraction_dir)
+                        extracted_files_rel_paths = [name for name in zip_ref.namelist() if not name.endswith('/')]
+                elif tarfile.is_tarfile(local_archive_path):
+                    with tarfile.open(local_archive_path, 'r:*') as tar_ref:
+                        tar_ref.extractall(local_extraction_dir)
+                        extracted_files_rel_paths = [m.name for m in tar_ref.getmembers() if m.isfile()]
+                else:
+                    container.set_status(DataContainerStatus.ERROR)
+                    container.add_error("Unsupported archive format (not zip or tar).")
+                    return container
+            except Exception as e:
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"Extraction failed: {str(e)}")
+                return container
 
             if not extracted_files_rel_paths:
-                logger.info("No files extracted from the archive.")
-                return None
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error("No files extracted from archive.")
+                return container
 
-            logger.info(f"Uploading {len(extracted_files_rel_paths)} extracted files to '{output_path}'...")
-
+            logger.info(f"Uploading {len(extracted_files_rel_paths)} files to '{output_path}'...")
             for rel_path in extracted_files_rel_paths:
-                final_rel_path = rel_path
                 parts = rel_path.split(os.sep)
-
-                if strip_components > 0:
-                    if len(parts) > strip_components:
-                        final_rel_path = os.path.join(*parts[strip_components:])
-                    else:
-                        logger.info(f"Warning: Cannot strip {strip_components} components from '{rel_path}'. Skipping stripping.")
-                        final_rel_path = os.path.basename(rel_path)
-
+                final_rel_path = os.path.join(*parts[strip_components:]) if len(parts) > strip_components else os.path.basename(rel_path)
                 local_full_path = os.path.join(local_extraction_dir, rel_path)
                 final_dest_path = os.path.join(output_path.rstrip('/'), final_rel_path).replace('\\', '/')
 
-                logger.info(f"  Uploading '{local_full_path}' to '{final_dest_path}'...")
-                storage_adapter.upload_local_file(local_full_path, final_dest_path)
-                output_container.add_file_path(final_dest_path)
+                try:
+                    storage_adapter.upload_local_file(local_full_path, final_dest_path)
+                    container.add_file_path(final_dest_path)
+                except Exception as e:
+                    logger.warning(f"Failed to upload '{local_full_path}': {e}")
+                    container.add_error(f"Upload failed for '{rel_path}': {str(e)}")
 
-        output_container.metadata['extracted_from'] = input_path
-        return output_container
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.metadata['extracted_from'] = input_path
+        container.add_history(self.get_plugin_name())
+        return container

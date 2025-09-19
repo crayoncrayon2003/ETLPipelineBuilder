@@ -1,11 +1,12 @@
 import os
 import paramiko
-from typing import Dict, Any, Optional
-import pluggy
 import tempfile
+from typing import Dict, Any
+import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -14,7 +15,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class ScpExtractor:
+class ScpExtractor(BasePlugin):
     """
     (Storage Aware) Downloads a file via SCP. If the output path is S3,
     it downloads to a temporary local file first, then uploads to S3
@@ -29,62 +30,40 @@ class ScpExtractor:
         return {
             "type": "object",
             "properties": {
-                "host": {
-                    "type": "string",
-                    "title": "SSH Host",
-                    "description": "Hostname or IP address of the remote server."
-                },
-                "user": {
-                    "type": "string",
-                    "title": "SSH Username"
-                },
-                "remote_path": {
-                    "type": "string",
-                    "title": "Remote File Path",
-                    "description": "The full path to the file on the remote server."
-                },
-                "output_path": {
-                    "type": "string",
-                    "title": "Output Path (local or s3://)",
-                    "description": "The final destination for the downloaded file."
-                },
-                "password": {
-                    "type": "string",
-                    "title": "Password (Optional)",
-                    "description": "Password for authentication. Use of SSH key is recommended.",
-                    "format": "password"
-                },
-                "key_filepath": {
-                    "type": "string",
-                    "title": "SSH Key File Path (Optional)",
-                    "description": "Local path to the private SSH key for authentication."
-                }
+                "host": {"type": "string", "title": "SSH Host"},
+                "user": {"type": "string", "title": "SSH Username"},
+                "remote_path": {"type": "string", "title": "Remote File Path"},
+                "output_path": {"type": "string", "title": "Output Path (local or s3://)"},
+                "password": {"type": "string", "title": "Password", "format": "password"},
+                "key_filepath": {"type": "string", "title": "SSH Key File Path"}
             },
             "required": ["host", "user", "remote_path", "output_path"]
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        host = params.get("host")
-        port = params.get("port", 22)
-        user = params.get("user")
-        password = params.get("password")
-        key_filepath = params.get("key_filepath")
-        remote_path = params.get("remote_path")
-        output_path_str = str(params.get("output_path"))
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        host = self.params.get("host")
+        port = self.params.get("port", 22)
+        user = self.params.get("user")
+        password = self.params.get("password")
+        key_filepath = self.params.get("key_filepath")
+        remote_path = self.params.get("remote_path")
+        output_path_str = str(self.params.get("output_path"))
+
+        container = DataContainer()
 
         if not all([host, user, remote_path, output_path_str]):
-            raise ValueError("ScpExtractor requires 'host', 'user', 'remote_path', and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'host', 'user', 'remote_path', 'output_path'.")
+            return container
         if not password and not key_filepath:
-            raise ValueError("ScpExtractor requires either 'password' or 'key_filepath'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Either 'password' or 'key_filepath' must be provided.")
+            return container
 
         def basename(path: str) -> str:
-            # 末尾のスラッシュを削除してからファイル名取得
             return os.path.basename(path.rstrip('/'))
 
-        # 一時ディレクトリ内の一時ファイルパスを文字列で作成
         with tempfile.TemporaryDirectory() as temp_dir:
             local_temp_path = os.path.join(temp_dir, basename(remote_path))
 
@@ -103,19 +82,27 @@ class ScpExtractor:
                 logger.info(f"Successfully downloaded to {local_temp_path}")
             except Exception as e:
                 logger.error(f"SCP download operation failed: {e}")
-                raise
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(str(e))
+                return container
             finally:
                 if ssh_client:
                     ssh_client.close()
 
-            # StorageAdapterを使って一時ファイルを最終出力先へ移動（アップロード）
-            storage_adapter.upload_local_file(local_temp_path, output_path_str)
+            try:
+                storage_adapter.upload_local_file(local_temp_path, output_path_str)
+            except Exception as e:
+                logger.error(f"Storage upload failed: {e}")
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(str(e))
+                return container
 
-        container = DataContainer()
+        container.set_status(DataContainerStatus.SUCCESS)
         container.add_file_path(output_path_str)
         container.metadata.update({
             'source_type': 'scp',
             'remote_host': host,
             'remote_path': remote_path
         })
+        container.add_history(self.get_plugin_name())
         return container

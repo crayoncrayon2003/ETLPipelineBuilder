@@ -1,12 +1,13 @@
 import os
-import asyncio, aiohttp, json
-from typing import Dict, Any, List, Optional
+import asyncio
+import aiohttp
+import json
+from typing import Dict, Any, List
 import pluggy
-from pathlib import Path
-import tempfile
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -15,7 +16,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class HttpLoader:
+class HttpLoader(BasePlugin):
     """
     (Storage Aware) Loads data by sending lines from a file (local or S3)
     to an HTTP endpoint.
@@ -44,51 +45,70 @@ class HttpLoader:
             async with session.request(self.method, self.url, data=payload.encode('utf-8'), headers=self.headers) as response:
                 if response.status >= 400:
                     error_text = await response.text()
-                    logger.info(f"Request {index+1} failed with status {response.status}: {error_text[:200]}")
+                    logger.warning(f"Request {index+1} failed with status {response.status}: {error_text[:200]}")
                     response.raise_for_status()
                 logger.info(f"Request {index+1} succeeded.")
         except aiohttp.ClientError as e:
-            logger.error(f"Request {index+1} failed with client error: {e}")
-            if self.stop_on_fail: raise
+            logger.error(f"Request {index+1} failed: {e}")
+            if self.stop_on_fail:
+                raise
 
     async def _main(self, payloads: List[str]):
         conn = aiohttp.TCPConnector(limit_per_host=self.concurrency)
         async with aiohttp.ClientSession(connector=conn) as session:
             tasks = [self._send_request(session, payload, i) for i, payload in enumerate(payloads)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-        final_errors = [res for res in results if isinstance(res, Exception)]
-        if final_errors:
-            raise RuntimeError(f"Some HTTP requests failed: {final_errors[0]}") from final_errors[0]
-
+        errors = [e for e in results if isinstance(e, Exception)]
+        if errors:
+            raise RuntimeError(f"{len(errors)} HTTP requests failed. First error: {errors[0]}") from errors[0]
 
     @hookimpl
-    def execute_plugin(self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        self.url = params.get("url")
-        self.method = params.get("method", "POST").upper()
-        self.headers = params.get("headers", {})
-        self.concurrency = params.get("concurrency", 10)
-        self.stop_on_fail = params.get("stop_on_fail", True)
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        self.url = self.params.get("url")
+        self.method = self.params.get("method", "POST").upper()
+        self.headers = self.params.get("headers", {})
+        self.concurrency = self.params.get("concurrency", 10)
+        self.stop_on_fail = self.params.get("stop_on_fail", True)
+
+        container = DataContainer()
 
         if not input_path or not self.url:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'url'.")
-        if 'Content-Type' not in self.headers: self.headers['Content-Type'] = 'application/json'
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path' and 'url'.")
+            return container
 
-        logger.info(f"Reading file '{input_path}' to send to HTTP endpoint using StorageAdapter...")
+        if 'Content-Type' not in self.headers:
+            self.headers['Content-Type'] = 'application/json'
+
         try:
             file_content = storage_adapter.read_text(input_path)
             payloads = [line.strip() for line in file_content.splitlines() if line.strip()]
         except Exception as e:
-            raise IOError(f"Failed to read input file '{input_path}' using StorageAdapter: {e}") from e
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to read input file: {str(e)}")
+            return container
 
         if not payloads:
-            logger.info("No data in file to load."); return None
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Input file contains no valid lines.")
+            return container
 
-        logger.info(f"Sending {len(payloads)} HTTP {self.method} requests with concurrency {self.concurrency}...")
+        logger.info(f"Sending {len(payloads)} HTTP {self.method} requests to {self.url} with concurrency {self.concurrency}...")
         try:
             asyncio.run(self._main(payloads))
-            logger.info("All HTTP requests processed successfully.")
         except Exception as e:
-            logger.error(f"An error occurred during HTTP loading: {e}")
-            raise
-        return None
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"HTTP loading failed: {str(e)}")
+            return container
+
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.metadata.update({
+            "input_path": input_path,
+            "url": self.url,
+            "method": self.method,
+            "requests_sent": len(payloads),
+            "concurrency": self.concurrency
+        })
+        container.add_history(self.get_plugin_name())
+        return container

@@ -1,10 +1,11 @@
 import os
-from typing import Dict, Any, List, Optional
-import pluggy
 import pandas as pd
+from typing import Dict, Any, List
+import pluggy
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -13,7 +14,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class BusinessRulesValidator:
+class BusinessRulesValidator(BasePlugin):
     """
     (Storage Aware) Validates a file (local or S3) against custom business rules.
     """
@@ -29,12 +30,15 @@ class BusinessRulesValidator:
                 "input_path": {"type": "string", "title": "Input File Path (local/s3)"},
                 "output_path": {"type": "string", "title": "Output File Path (local/s3)"},
                 "rules": {
-                    "type": "array", "title": "Business Rules", "items": {
+                    "type": "array",
+                    "title": "Business Rules",
+                    "items": {
                         "type": "object",
                         "properties": {
                             "name": {"type": "string", "description": "A description of the rule."},
                             "expression": {"type": "string", "description": "A pandas query string that identifies INVALID rows."}
-                        }, "required": ["name", "expression"]
+                        },
+                        "required": ["name", "expression"]
                     }
                 }
             },
@@ -42,23 +46,33 @@ class BusinessRulesValidator:
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        output_path = str(params.get("output_path"))
-        rules = params.get("rules", [])
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        output_path = str(self.params.get("output_path"))
+        rules = self.params.get("rules", [])
+
+        container = DataContainer()
 
         if not input_path or not output_path:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
+            return container
 
-        df = storage_adapter.read_df(input_path)
+        try:
+            df = storage_adapter.read_df(input_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to read input file: {str(e)}")
+            return container
 
         all_errors: List[str] = []
         for rule in rules:
-            rule_name, expression = rule.get('name'), rule.get('expression')
+            rule_name = rule.get('name')
+            expression = rule.get('expression')
             if not rule_name or not expression:
-                raise ValueError(f"Rule is missing 'name' or 'expression': {rule}")
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"Rule missing 'name' or 'expression': {rule}")
+                return container
             try:
                 invalid_rows_df = df.query(expression)
                 if not invalid_rows_df.empty:
@@ -66,14 +80,28 @@ class BusinessRulesValidator:
                                  f"(Expression: '{expression}').")
                     all_errors.append(error_msg)
             except Exception as e:
-                raise ValueError(f"Error executing business rule '{rule_name}': {e}")
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"Error executing rule '{rule_name}': {str(e)}")
+                return container
 
         if all_errors:
-            raise ValueError(f"Business rule validation failed:\n- " + "\n- ".join(all_errors))
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Business rule validation failed:\n- " + "\n- ".join(all_errors))
+            return container
 
-        logger.info("All business rules passed. Copying file to output path.")
-        storage_adapter.copy_file(input_path, output_path)
+        try:
+            storage_adapter.copy_file(input_path, output_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to copy file: {str(e)}")
+            return container
 
-        output_container = DataContainer()
-        output_container.add_file_path(output_path)
-        return output_container
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.add_file_path(output_path)
+        container.metadata.update({
+            "input_path": input_path,
+            "rules_checked": len(rules),
+            "validation_passed": True
+        })
+        container.add_history(self.get_plugin_name())
+        return container

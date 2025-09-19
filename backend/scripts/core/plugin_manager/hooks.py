@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import pluggy
 
 from ..data_container.container import DataContainer
@@ -31,15 +31,9 @@ class EtlHookSpecs:
         pass
 
     @hookspec
-    def execute_plugin(
-        self,
-        params: Dict[str, Any],
-        inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
+    def execute(self, input_data: DataContainer) -> DataContainer:
         """
-        The primary hook that all functional plugins (Extractors, Transformers, etc.) will implement.
-
-        Pluggy will call all plugins that implement this hook. The plugin itself
-        is responsible for checking if it should run based on its name.
+        Execute plugin logic with input data and return output data.
+        Plugin-specific parameters should be passed via constructor.
         """
         pass

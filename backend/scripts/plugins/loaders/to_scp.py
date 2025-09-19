@@ -1,11 +1,12 @@
 import os
 import paramiko
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import pluggy
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -14,7 +15,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class ScpLoader:
+class ScpLoader(BasePlugin):
     """
     (Storage Aware) Loads (uploads) a file from local or S3 to a remote server using SCP.
     """
@@ -40,20 +41,26 @@ class ScpLoader:
         }
 
     @hookimpl
-    def execute_plugin(self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]) -> Optional[DataContainer]:
-        input_path_str = str(params.get("input_path"))
-        host = params.get("host")
-        port = params.get("port", 22)
-        user = params.get("user")
-        password = params.get("password")
-        key_filepath = params.get("key_filepath")
-        remote_path_str = str(params.get("remote_path"))
-        timeout = params.get("timeout", 30)
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path_str = str(self.params.get("input_path"))
+        host = self.params.get("host")
+        port = self.params.get("port", 22)
+        user = self.params.get("user")
+        password = self.params.get("password")
+        key_filepath = self.params.get("key_filepath")
+        remote_path_str = str(self.params.get("remote_path"))
+        timeout = self.params.get("timeout", 30)
+
+        container = DataContainer()
 
         if not all([input_path_str, host, user, remote_path_str]):
-            raise ValueError("ScpLoader requires 'input_path', 'host', 'user', and 'remote_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path', 'host', 'user', 'remote_path'.")
+            return container
         if not password and not key_filepath:
-            raise ValueError("ScpLoader requires either 'password' or 'key_filepath'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Either 'password' or 'key_filepath' must be provided.")
+            return container
 
         def basename(path: str) -> str:
             return os.path.basename(path.rstrip('/'))
@@ -64,31 +71,35 @@ class ScpLoader:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_local_path = os.path.join(temp_dir, basename(input_path_str))
 
-            if input_path_str.startswith("s3://"):
-                logger.info(f"Downloading '{input_path_str}' from S3 to temporary location using StorageAdapter...")
-                try:
+            try:
+                if input_path_str.startswith("s3://"):
+                    logger.info(f"Downloading '{input_path_str}' from S3...")
                     file_content_bytes = storage_adapter.read_bytes(input_path_str)
                     with open(temp_local_path, 'wb') as f:
                         f.write(file_content_bytes)
                     local_file_to_upload = temp_local_path
-                except Exception as e:
-                    raise IOError(f"Failed to download file from S3 using StorageAdapter: {e}") from e
-            else:
-                local_file_to_upload = input_path_str
+                else:
+                    local_file_to_upload = input_path_str
 
-            if not os.path.isfile(local_file_to_upload):
-                raise FileNotFoundError(f"Input file could not be found or downloaded: {local_file_to_upload}")
+                if not os.path.isfile(local_file_to_upload):
+                    raise FileNotFoundError(f"File not found: {local_file_to_upload}")
+            except Exception as e:
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"Failed to prepare file for upload: {str(e)}")
+                return container
 
             ssh_client = None
             try:
                 ssh_client = paramiko.SSHClient()
                 ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                logger.info(f"Connecting to {host}:{port} as user '{user}' for SCP upload...")
-                ssh_client.connect(hostname=host, port=port, username=user, password=password, key_filename=key_filepath, timeout=timeout)
+                logger.info(f"Connecting to {host}:{port} as user '{user}'...")
+                ssh_client.connect(
+                    hostname=host, port=port, username=user,
+                    password=password, key_filename=key_filepath, timeout=timeout
+                )
 
                 with ssh_client.open_sftp() as sftp:
                     final_remote_path = remote_path_str
-                    # remote_pathがディレクトリで終わっている、またはファイル名が空文字の場合はファイル名を結合
                     if remote_path_str.endswith('/') or not basename(remote_path_str):
                         final_remote_path = remote_path_str.rstrip('/') + '/' + basename(local_file_to_upload)
 
@@ -96,7 +107,7 @@ class ScpLoader:
                     try:
                         sftp.stat(remote_dir)
                     except FileNotFoundError:
-                        logger.error(f"Remote directory '{remote_dir}' not found, attempting to create...")
+                        logger.info(f"Creating remote directory '{remote_dir}'...")
                         current_path = ""
                         for part in remote_dir.split('/'):
                             if not part:
@@ -106,15 +117,23 @@ class ScpLoader:
                                 sftp.stat(current_path)
                             except FileNotFoundError:
                                 sftp.mkdir(current_path)
-                        logger.error(f"Successfully created remote directory '{remote_dir}'.")
 
-                    logger.info(f"Uploading '{basename(local_file_to_upload)}' to '{final_remote_path}'...")
+                    logger.info(f"Uploading to '{final_remote_path}'...")
                     sftp.put(local_file_to_upload, final_remote_path)
-                logger.info("File uploaded successfully via SCP.")
             except Exception as e:
-                logger.error(f"SCP upload failed: {e}")
-                raise
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error(f"SCP upload failed: {str(e)}")
+                return container
             finally:
                 if ssh_client:
                     ssh_client.close()
-        return None
+
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.metadata.update({
+            "input_path": input_path_str,
+            "remote_host": host,
+            "remote_path": remote_path_str,
+            "uploaded_filename": basename(local_file_to_upload)
+        })
+        container.add_history(self.get_plugin_name())
+        return container

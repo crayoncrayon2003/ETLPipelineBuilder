@@ -1,11 +1,17 @@
 import os
+import json
+import csv
+import tarfile
+import zipfile
+import xml.etree.ElementTree as ET
+import tempfile
+from typing import Dict, Any
 import pluggy
-import json, csv, tarfile, zipfile, xml.etree.ElementTree as ET, shutil, tempfile
-from typing import Dict, Any, Optional
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.data_container.formats import SupportedFormats
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -14,7 +20,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class FormatDetector:
+class FormatDetector(BasePlugin):
     """
     (Storage Aware) Detects the format of a file (local or S3) and passes it through.
     """
@@ -29,7 +35,7 @@ class FormatDetector:
             "properties": {
                 "input_path": {"type": "string", "title": "Input File Path (local/s3)"},
                 "output_path": {"type": "string", "title": "Output File Path (local/s3)"},
-                "read_chunk_size": {  # read_chunk_sizeもスキーマに追加
+                "read_chunk_size": {
                     "type": "integer",
                     "title": "Read Chunk Size for Detection",
                     "default": 4096,
@@ -40,7 +46,6 @@ class FormatDetector:
         }
 
     def _detect_format(self, file_path: str, read_chunk_size: int) -> SupportedFormats:
-        # This helper works on a local file path (string)
         try:
             if os.path.getsize(file_path) == 0:
                 return SupportedFormats.UNKNOWN
@@ -48,24 +53,18 @@ class FormatDetector:
             with open(file_path, 'rb') as f:
                 chunk = f.read(read_chunk_size)
 
-            # detect BINARY
             try:
                 text_chunk = chunk.decode('utf-8').lstrip()
             except UnicodeDecodeError:
                 return SupportedFormats.BINARY
 
-            # detect JSON
             if text_chunk.startswith(('{', '[')):
                 try:
-                    if '\n' in text_chunk:
-                        json.loads(text_chunk.split('\n')[0].strip())
-                    else:
-                        json.loads(text_chunk)
+                    json.loads(text_chunk.split('\n')[0].strip() if '\n' in text_chunk else text_chunk)
                     return SupportedFormats.JSON
                 except json.JSONDecodeError:
                     pass
 
-            # detect XML
             if text_chunk.startswith('<'):
                 try:
                     ET.fromstring(text_chunk)
@@ -73,7 +72,6 @@ class FormatDetector:
                 except ET.ParseError:
                     pass
 
-            # detect CSV
             if len(text_chunk) > 100:
                 try:
                     csv.Sniffer().sniff(text_chunk, delimiters=',;\t|')
@@ -87,20 +85,18 @@ class FormatDetector:
             return SupportedFormats.UNKNOWN
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        output_path = str(params.get("output_path"))
-        read_chunk_size = params.get("read_chunk_size", 4096)
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        output_path = str(self.params.get("output_path"))
+        read_chunk_size = self.params.get("read_chunk_size", 4096)
+
+        container = DataContainer()
 
         if not input_path or not output_path:
-            raise ValueError("Plugin requires 'input_path' and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
+            return container
 
-        detected_format = SupportedFormats.UNKNOWN
-
-        # Download file content (or read local) into memory, then write to temporary local file for inspection
-        logger.info(f"Reading '{input_path}' content for format detection...")
         try:
             file_content_bytes = storage_adapter.read_bytes(input_path)
 
@@ -109,20 +105,22 @@ class FormatDetector:
                 with open(temp_input_path, "wb") as f:
                     f.write(file_content_bytes)
 
-                # Detect format on the local temporary file
                 detected_format = self._detect_format(temp_input_path, read_chunk_size)
-                logger.info(f" -> Detected format: {detected_format.value}")
-
+                logger.info(f"Detected format: {detected_format.value}")
         except Exception as e:
-            logger.error(f"Failed to process file '{input_path}' for format detection: {e}")
-            raise
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Format detection failed: {str(e)}")
+            return container
 
-        # This plugin is non-destructive, so copy the original file to the output path
-        # storage_adapter.copy_file は input_path が S3でもlocalでも対応する
-        logger.info(f"Format detection complete. Copying original file to '{output_path}'.")
-        storage_adapter.copy_file(input_path, output_path)
+        try:
+            storage_adapter.copy_file(input_path, output_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to copy file: {str(e)}")
+            return container
 
-        output_container = DataContainer()
-        output_container.add_file_path(output_path)
-        output_container.metadata['detected_format'] = detected_format.value
-        return output_container
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.add_file_path(output_path)
+        container.metadata['detected_format'] = detected_format.value
+        container.add_history(self.get_plugin_name())
+        return container

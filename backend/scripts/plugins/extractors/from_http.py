@@ -3,9 +3,11 @@ import requests
 from typing import Dict, Any, Optional
 import pluggy
 from urllib.parse import urlparse
+import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -14,11 +16,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class HttpExtractor:
-    """
-    (Storage Aware) Downloads a file from an HTTP(S) source and saves it
-    to a specified destination (local filesystem or S3).
-    """
+class HttpExtractor(BasePlugin):
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_http"
@@ -28,52 +26,47 @@ class HttpExtractor:
         return {
             "type": "object",
             "properties": {
-                "url": {
-                    "type": "string",
-                    "title": "Source URL",
-                    "description": "The URL to download the data file from."
-                },
-                "output_path": {
-                    "type": "string",
-                    "title": "Output File/Directory Path (local or s3://)",
-                    "description": "If a directory is provided, the filename is inferred from the URL."
-                }
+                "url": {"type": "string"},
+                "output_path": {"type": "string"}
             },
             "required": ["url", "output_path"]
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        url = params.get("url")
-        output_path_str = str(params.get("output_path"))
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        url = self.params.get("url")
+        output_path_str = str(self.params.get("output_path"))
+        container = DataContainer()
 
         if not url or not output_path_str:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'url' and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'url' and 'output_path'.")
+            return container
 
         final_output_path = output_path_str
         if final_output_path.endswith('/'):
             parsed_url = urlparse(url)
             filename = os.path.basename(parsed_url.path)
             if not filename:
-                raise ValueError("Could not infer filename from URL.")
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error("Could not infer filename from URL.")
+                return container
             final_output_path = os.path.join(final_output_path, filename)
 
         logger.info(f"Downloading from '{url}' to '{final_output_path}'...")
         try:
-            with requests.get(url=url, timeout=60) as response:
-                response.raise_for_status()
-                # Use the storage adapter to write the downloaded bytes.
-                # It will automatically handle local vs. S3 paths.
-                storage_adapter.write_bytes(response.content, final_output_path)
-
+            response = requests.get(url=url, timeout=60)
+            response.raise_for_status()
+            storage_adapter.write_bytes(response.content, final_output_path)
             logger.info("File downloaded and saved successfully.")
         except requests.RequestException as e:
             logger.error(f"HTTP request failed: {e}")
-            raise
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(str(e))
+            return container
 
-        container = DataContainer()
+        container.set_status(DataContainerStatus.SUCCESS)
         container.add_file_path(final_output_path)
         container.metadata['source_url'] = url
+        container.add_history(self.get_plugin_name())
         return container

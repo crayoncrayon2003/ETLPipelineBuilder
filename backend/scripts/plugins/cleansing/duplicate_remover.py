@@ -1,9 +1,10 @@
 import os
-from typing import Dict, Any, Union, List, Optional
+from typing import Dict, Any, Union, List
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -12,7 +13,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class DuplicateRemover:
+class DuplicateRemover(BasePlugin):
     """
     (Storage Aware) Removes duplicate rows from a tabular file (local or S3),
     preserving the original file format.
@@ -53,30 +54,46 @@ class DuplicateRemover:
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        output_path = str(params.get("output_path"))
-        subset: Union[List[str], None] = params.get("subset")
-        keep: Union[str, bool] = params.get("keep", "first")
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        output_path = str(self.params.get("output_path"))
+        subset: Union[List[str], None] = self.params.get("subset")
+        keep: Union[str, bool] = self.params.get("keep", "first")
+
+        container = DataContainer()
 
         if not input_path or not output_path:
-            raise ValueError(f"Plugin '{self.get_plugin_name()}' requires 'input_path' and 'output_path'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
+            return container
 
-        # Use the storage adapter to read from local or S3
-        df = storage_adapter.read_df(input_path)
+        try:
+            df = storage_adapter.read_df(input_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to read input file: {str(e)}")
+            return container
 
         initial_row_count = len(df)
         logger.info(f"Initial rows: {initial_row_count}")
 
-        deduplicated_df = df.drop_duplicates(subset=subset, keep=keep, inplace=False)
-        rows_removed = initial_row_count - len(deduplicated_df)
-        logger.info(f"Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
+        try:
+            deduplicated_df = df.drop_duplicates(subset=subset, keep=keep, inplace=False)
+            rows_removed = initial_row_count - len(deduplicated_df)
+            logger.info(f"Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
 
-        # Use the storage adapter to write to local or S3
-        storage_adapter.write_df(deduplicated_df, output_path)
+            storage_adapter.write_df(deduplicated_df, output_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Deduplication or saving failed: {str(e)}")
+            return container
 
-        output_container = DataContainer()
-        output_container.add_file_path(output_path)
-        return output_container
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.add_file_path(output_path)
+        container.metadata.update({
+            "input_path": input_path,
+            "rows_removed": rows_removed,
+            "deduplicated": True
+        })
+        container.add_history(self.get_plugin_name())
+        return container

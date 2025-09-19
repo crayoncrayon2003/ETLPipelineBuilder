@@ -1,12 +1,15 @@
 import os
 import requests
-from typing import Dict, Any, Optional
-import pluggy
-from urllib.parse import urlparse
 import json
+from urllib.parse import urlparse
+from typing import Dict, Any
+import pluggy
+
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer
-from core.infrastructure.storage_path_utils import normalize_path, is_remote_path, is_local_path
+from core.infrastructure.storage_path_utils import normalize_path
+from core.data_container.container import DataContainer, DataContainerStatus
+from core.plugin_manager.base_plugin import BasePlugin
+
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -14,7 +17,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class HttpBasicAuthExtractor:
+class HttpBasicAuthExtractor(BasePlugin):
     """
     (Storage Aware) Downloads a file from an HTTP(S) source that requires
     Basic Authentication, saving to local filesystem or S3.
@@ -28,7 +31,7 @@ class HttpBasicAuthExtractor:
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "title": "Source URL" },
+                "url": {"type": "string", "title": "Source URL"},
                 "output_path": {"type": "string", "title": "Output Path (local or s3://)"},
                 "username": {"type": "string", "title": "Username"},
                 "password": {"type": "string", "title": "Password", "format": "password"}
@@ -37,20 +40,20 @@ class HttpBasicAuthExtractor:
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        logger.info(f"Received params: {json.dumps(params, indent=2)}")
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        logger.info(f"Received params: {json.dumps(self.params, indent=2)}")
 
-        url = params.get("url")
-        output_path_str = str(params.get("output_path"))
-        username = params.get("username")
-        password = params.get("password")
+        url = self.params.get("url")
+        output_path_str = str(self.params.get("output_path"))
+        username = self.params.get("username")
+        password = self.params.get("password")
 
-        logger.info(f"url:'{url}'  output_path_str:'{output_path_str}'")
+        container = DataContainer()
 
         if not all([url, output_path_str, username, password]):
-            raise ValueError("Plugin requires 'url', 'output_path', 'username', and 'password'.")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'url', 'output_path', 'username', 'password'.")
+            return container
 
         final_output_path = normalize_path(output_path_str, os.getcwd())
 
@@ -58,23 +61,26 @@ class HttpBasicAuthExtractor:
             parsed_url = urlparse(url)
             filename = os.path.basename(parsed_url.path)
             if not filename:
-                raise ValueError("Could not infer filename from URL.")
+                container.set_status(DataContainerStatus.ERROR)
+                container.add_error("Could not infer filename from URL.")
+                return container
             final_output_path = os.path.join(final_output_path, filename)
 
         logger.info(f"Downloading from '{url}' to '{final_output_path}' using Basic Auth...")
 
         try:
-            with requests.get(url, auth=(username, password), timeout=60) as response:
-                response.raise_for_status()
-                storage_adapter.write_bytes(response.content, final_output_path)
-
+            response = requests.get(url, auth=(username, password), timeout=60)
+            response.raise_for_status()
+            storage_adapter.write_bytes(response.content, final_output_path)
             logger.info("File downloaded and saved successfully.")
         except requests.RequestException as e:
             logger.error(f"HTTP request with Basic Auth failed: {e}")
-            raise
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(str(e))
+            return container
 
-        # 成功した場合、DataContainer に結果を返す
-        container = DataContainer()
+        container.set_status(DataContainerStatus.SUCCESS)
         container.add_file_path(final_output_path)
         container.metadata['source_url'] = url
+        container.add_history(self.get_plugin_name())
         return container

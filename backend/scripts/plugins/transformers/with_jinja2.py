@@ -1,12 +1,14 @@
 import os
 import json
 import pandas as pd
+from typing import Dict, Any
 import pluggy
-from typing import Dict, Any, Optional
+
 from jinja2 import Environment, FileSystemLoader
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.infrastructure import storage_adapter
+from core.plugin_manager.base_plugin import BasePlugin
 
 from utils.logger import setup_logger
 
@@ -15,7 +17,7 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-class Jinja2Transformer:
+class Jinja2Transformer(BasePlugin):
     """
     (Storage Aware) Transforms rows from a tabular file (local or S3) into a
     structured text file (local or S3) using a Jinja2 template.
@@ -31,66 +33,83 @@ class Jinja2Transformer:
             "properties": {
                 "input_path": {
                     "type": "string",
-                    "title": "Input File Path (local/s3)",
-                    "description": "The source file containing rows to be transformed."
+                    "title": "Input File Path (local/s3)"
                 },
                 "output_path": {
                     "type": "string",
-                    "title": "Output Text File Path (local/s3)",
-                    "description": "Path to save the rendered text output (e.g., a .jsonl file)."
+                    "title": "Output Text File Path (local/s3)"
                 },
                 "template_path": {
                     "type": "string",
-                    "title": "Jinja2 Template Path (local)",
-                    "description": "The local path to the .j2 template file."
+                    "title": "Jinja2 Template Path (local)"
                 }
             },
             "required": ["input_path", "output_path", "template_path"]
         }
 
     @hookimpl
-    def execute_plugin(
-        self, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]]
-    ) -> Optional[DataContainer]:
-        input_path = str(params.get("input_path"))
-        output_path = str(params.get("output_path"))
-        template_path = str(params.get("template_path"))
+    def execute(self, input_data: DataContainer) -> DataContainer:
+        input_path = str(self.params.get("input_path"))
+        output_path = str(self.params.get("output_path"))
+        template_path = str(self.params.get("template_path"))
+
+        container = DataContainer()
 
         if not all([input_path, output_path, template_path]):
-            raise ValueError("Plugin requires 'input_path', 'output_path', and 'template_path'.")
-        if not os.path.exists(input_path):
-            raise FileNotFoundError(f"Input file not found: {input_path}")
-        if not os.path.exists(template_path):
-            raise FileNotFoundError(f"Template file not found: {template_path}")
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error("Missing required parameters: 'input_path', 'output_path', 'template_path'.")
+            return container
 
-        # Use StorageAdapter to read the input from local or S3
-        df = storage_adapter.read_df(input_path)
+        if not os.path.exists(template_path):
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Template file not found: {template_path}")
+            return container
+
+        try:
+            df = storage_adapter.read_df(input_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to read input file: {str(e)}")
+            return container
 
         template_dir = os.path.dirname(template_path)
         template_file = os.path.basename(template_path)
         env = Environment(loader=FileSystemLoader(template_dir), trim_blocks=True, lstrip_blocks=True)
-        template = env.get_template(template_file)
+
+        try:
+            template = env.get_template(template_file)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to load Jinja2 template: {str(e)}")
+            return container
 
         records = df.to_dict(orient='records')
-
-        # Build the full text content in memory first
         output_lines = []
+
         for record in records:
             try:
                 rendered_string = template.render(record)
-                # Ensure each line is a valid JSON object for JSONL format
                 json_object = json.loads(rendered_string)
                 output_lines.append(json.dumps(json_object))
             except Exception as e:
-                logger.error(f"ERROR rendering template for record: {record}. Error: {e}")
+                logger.error(f"Template rendering error for record: {record}. Error: {e}")
                 output_lines.append(json.dumps({"error": str(e), "source_record": record}))
 
         full_output_text = "\n".join(output_lines)
 
-        # Use StorageAdapter to write the final text file to local or S3
-        storage_adapter.write_text(full_output_text, output_path)
+        try:
+            storage_adapter.write_text(full_output_text, output_path)
+        except Exception as e:
+            container.set_status(DataContainerStatus.ERROR)
+            container.add_error(f"Failed to write output file: {str(e)}")
+            return container
 
-        logger.info(f"Transformation of {len(records)} records complete. Output: '{output_path}'.")
-        output_container = DataContainer()
-        output_container.add_file_path(output_path)
-        return output_container
+        container.set_status(DataContainerStatus.SUCCESS)
+        container.add_file_path(output_path)
+        container.metadata.update({
+            "input_path": input_path,
+            "template_path": template_path,
+            "records_processed": len(records)
+        })
+        container.add_history(self.get_plugin_name())
+        return container
