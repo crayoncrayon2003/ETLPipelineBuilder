@@ -1,23 +1,28 @@
 @startuml ETL Framework Backend
 
 !theme plain
-skinparam classAttributeIconSize 0
+skinparam componentStyle uml2
 skinparam defaultFontName "Segoe UI", "Helvetica", "Arial"
 skinparam package {
     BackgroundColor LightBlue
     BorderColor RoyalBlue
 }
-skinparam class {
+skinparam component {
     BackgroundColor LightYellow
     ArrowColor Navy
     BorderColor Navy
 }
-skinparam stereotype {
-    BackgroundColor Peru
-    FontColor white
+skinparam actor {
+    BackgroundColor LightBlue
+    BorderColor RoyalBlue
 }
-skinparam enum {
-    BackgroundColor LightGreen
+skinparam interface {
+    BackgroundColor LightPink
+    BorderColor Firebrick
+}
+skinparam note {
+    BackgroundColor LightGoldenRodYellow
+    BorderColor GoldenRod
 }
 
 ' #############################################
@@ -34,6 +39,14 @@ package "Clients / Runners" {
             + main()
         }
     }
+    package "API Clients" {
+        class "call_controlled_service.py" as ControlledClient {
+            + POST /proxy/controlled_service
+        }
+        class "call_configured_service.py" as ConfiguredClient {
+            + POST /proxy/configured_service/{config_name}
+        }
+    }
 }
 
 ' #############################################
@@ -44,12 +57,14 @@ package "backend.api" {
     class "main.py" as FastApiApp
     class "pipelines_router.py" as PipelinesRouter
     class "pipeline_service.py" as PipelineService
+    class "configured_service_router.py" as ConfiguredRouter
+    class "proxy_configured_service.py" as ConfiguredService
+    class "proxy_controlled_service.py" as ControlledService
     package "schemas" {
         class PipelineDefinition
         class PluginInfo
     }
 }
-
 
 ' #############################################
 ' ###           CORE FRAMEWORK              ###
@@ -81,12 +96,29 @@ package "backend.core" {
 ' ###              PLUGINS                  ###
 ' #############################################
 package "backend.plugins" {
-    ' extractors
-    ' cleansing
-    ' transformers
-    ' validators
-    ' loaders
-    '  ...
+    class BasePlugin <<abstract>> {
+        +execute(input_data)
+        +prev_execute()
+        +run() <<abstract>>
+        +post_execute()
+        +get_plugin_name() <<abstract>>
+        +get_parameters_schema() <<abstract>>
+        +finalize_container()
+    }
+
+    class "DuckDBTransformer"
+    class "HttpLoader"
+    class "Jinja2Transformer"
+    class "SparkTransformer"
+    class "FtpExtractor"
+    class "JsonSchemaValidator"
+
+    DuckDBTransformer --|> BasePlugin
+    HttpLoader --|> BasePlugin
+    Jinja2Transformer --|> BasePlugin
+    SparkTransformer --|> BasePlugin
+    FtpExtractor --|> BasePlugin
+    JsonSchemaValidator --|> BasePlugin
 }
 
 ' #############################################
@@ -98,7 +130,6 @@ package "backend.utils" {
     ' ... others
 }
 
-
 ' #############################################
 ' ###            RELATIONSHIPS              ###
 ' #############################################
@@ -106,6 +137,11 @@ package "backend.utils" {
 ' --- API Execution Flow ---
 Frontend ..> FastApiApp : HTTP Request
 FastApiApp ..> PipelinesRouter
+FastApiApp ..> ConfiguredRouter
+ConfiguredRouter ..> ConfiguredService
+ControlledClient ..> ControlledService : sends steps JSON
+ConfiguredClient ..> ConfiguredService : sends data only
+
 PipelinesRouter ..> PipelineService
 PipelinesRouter ..> backend.api.schemas.PipelineDefinition : uses for validation
 PipelineService ..> "Prefect Flow" : dynamically builds & runs
@@ -123,68 +159,7 @@ StepExecutor ..> DataContainer : passes between steps
 
 ' --- Utility and Other Dependencies ---
 StepExecutor ..> FileUtils : uses
-' Plugins can use any core component or utility
 backend.plugins ..> DataContainer
 backend.plugins ..> Logger
-
-@endumd
-
-
-@startuml API to Core Call Sequence
-
-!theme plain
-skinparam sequence {
-    ArrowColor Navy
-    ActorBorderColor Navy
-    LifeLineBorderColor Navy
-    ParticipantBorderColor RoyalBlue
-    ParticipantBackgroundColor LightYellow
-}
-
-actor Frontend
-participant "pipelines_router.py" as Router
-participant "pipeline_service.py" as Service
-participant "Prefect Flow/Task" as PrefectTask
-participant "StepExecutor" as Executor
-participant "FrameworkManager" as Manager
-participant "Plugin"
-
-Frontend -> Router : **1. POST /pipelines/run**\n(with PipelineDefinition JSON)
-
-activate Router
-Router -> Service : **2. run_pipeline_from_definition()**
-
-activate Service
-Service -> PrefectTask : **3. @flow / .submit()**\n(Starts the Prefect Flow)
-
-activate PrefectTask
-note right of PrefectTask : The Flow now runs in the background
-Service --> Frontend : **4. 202 Accepted**\n(Responds immediately)
-deactivate Service
-
-PrefectTask -> PrefectTask : **5. Loops through nodes**\n(e.g., node-1-extract)
-
-loop for each node in DAG
-    PrefectTask -> Executor : **6. execute_step()**\n(Passes step_config & inputs)
-
-    activate Executor
-    Executor -> Manager : **7. call_plugin_execute()**\n(Passes plugin_name, params, inputs)
-
-    activate Manager
-    Manager -> Plugin : **8. execute_plugin()**\n(Calls the specific plugin instance)
-
-    activate Plugin
-    Plugin --> Manager : **9. returns DataContainer**
-    deactivate Plugin
-
-    Manager --> Executor : **10. returns DataContainer**
-    deactivate Manager
-
-    Executor --> PrefectTask : **11. returns DataContainer**
-    deactivate Executor
-end
-
-PrefectTask --> PrefectTask : **12. Flow completes**
-deactivate PrefectTask
 
 @enduml
