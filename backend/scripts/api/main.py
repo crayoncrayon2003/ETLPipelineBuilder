@@ -21,6 +21,8 @@ from core.plugin_manager.manager import framework_manager
 
 from api.routers.plugins import router as plugins_router
 from api.routers.pipelines import router as pipelines_router
+from api.routers.proxy_controlled_service import router as controlled_router
+from api.routers.proxy_configured_service import router as configured_router
 from api.routers.schemas import router as schemas_router
 
 app = FastAPI(
@@ -44,6 +46,8 @@ app.add_middleware(
 app.include_router(plugins_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
 app.include_router(schemas_router, prefix="/api/v1")
+app.include_router(controlled_router, prefix="/api/v1")
+app.include_router(configured_router, prefix="/api/v1")
 
 @app.get("/", tags=["Status"])
 async def read_root():

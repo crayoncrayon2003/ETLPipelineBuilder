@@ -1,0 +1,43 @@
+{
+  "name": "configured_pipeline",
+  "nodes": [
+    {
+      "id": "step1_duckdb",
+      "plugin": "with_duckdb",
+      "params": {
+        "query_file": "../test/data/Step2/step2_with_duckdb.sql",
+        "output_path": "../test/data/Step3/run_pipeline_directly.parquet",
+        "table_name": "source_data"
+      }
+    },
+    {
+      "id": "step2_jinja2",
+      "plugin": "with_jinja2",
+      "params": {
+        "input_path": "../test/data/Step3/run_pipeline_directly.parquet",
+        "output_path": "../test/data/Step5/run_pipeline_directly.json",
+        "template_path": "../test/data/Step4/step4.j2"
+      }
+    },
+    {
+      "id": "step3_http",
+      "plugin": "to_http",
+      "params": {
+        "input_path": "../test/data/Step5/run_pipeline_directly.json",
+        "url": "http://localhost:8080/"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_node_id": "step1_duckdb",
+      "target_node_id": "step2_jinja2",
+      "target_input_name": "input_data"
+    },
+    {
+      "source_node_id": "step2_jinja2",
+      "target_node_id": "step3_http",
+      "target_input_name": "input_data"
+    }
+  ]
+}

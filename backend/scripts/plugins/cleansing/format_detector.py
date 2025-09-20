@@ -1,18 +1,15 @@
 import os
 import json
 import csv
-import tarfile
-import zipfile
 import xml.etree.ElementTree as ET
 import tempfile
 from typing import Dict, Any
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.data_container.formats import SupportedFormats
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -24,6 +21,7 @@ class FormatDetector(BasePlugin):
     """
     (Storage Aware) Detects the format of a file (local or S3) and passes it through.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "format_detector"
@@ -81,21 +79,16 @@ class FormatDetector(BasePlugin):
 
             return SupportedFormats.TEXT
         except Exception as e:
-            logger.error(f"Error during format detection for {file_path}: {e}")
+            logger.error(f"[{self.get_plugin_name()}] Error during format detection for {file_path}: {e}")
             return SupportedFormats.UNKNOWN
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         read_chunk_size = self.params.get("read_chunk_size", 4096)
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'output_path'.")
 
         try:
             file_content_bytes = storage_adapter.read_bytes(input_path)
@@ -106,21 +99,18 @@ class FormatDetector(BasePlugin):
                     f.write(file_content_bytes)
 
                 detected_format = self._detect_format(temp_input_path, read_chunk_size)
-                logger.info(f"Detected format: {detected_format.value}")
+                logger.info(f"[{self.get_plugin_name()}] Detected format: {detected_format.value}")
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Format detection failed: {str(e)}")
-            return container
+            raise RuntimeError(f"Format detection failed: {str(e)}")
 
         try:
             storage_adapter.copy_file(input_path, output_path)
+            logger.info(f"[{self.get_plugin_name()}] File copied to '{output_path}'.")
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to copy file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to copy file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata['detected_format'] = detected_format.value
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={"detected_format": detected_format.value}
+        )

@@ -4,9 +4,8 @@ from typing import Dict, Any, List
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -18,6 +17,7 @@ class DataQualityValidator(BasePlugin):
     """
     (Storage Aware) Performs data quality checks on a tabular file from local or S3.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "data_quality"
@@ -95,25 +95,18 @@ class DataQualityValidator(BasePlugin):
 
         return errors
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         rules = self.params.get("rules", [])
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'output_path'.")
 
         try:
             df = storage_adapter.read_df(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         all_errors: List[str] = []
         for rule in rules:
@@ -121,28 +114,22 @@ class DataQualityValidator(BasePlugin):
                 rule_errors = self._validate_rule(df, rule)
                 all_errors.extend(rule_errors)
             except (KeyError, ValueError) as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(str(e))
-                return container
+                raise RuntimeError(str(e))
 
         if all_errors:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Data quality validation failed:\n- " + "\n- ".join(all_errors))
-            return container
+            raise RuntimeError("Data quality validation failed:\n- " + "\n- ".join(all_errors))
 
         try:
             storage_adapter.copy_file(input_path, output_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to copy file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to copy file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "rules_checked": len(rules),
-            "validation_passed": True
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "rules_checked": len(rules),
+                "validation_passed": True
+            }
+        )

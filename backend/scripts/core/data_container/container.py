@@ -72,3 +72,7 @@ class DataContainer:
             "history": self.history,
             "schema": self.schema
         }
+
+    def add_error(self, error: str):
+        self.errors.append(error)
+        self.metadata.setdefault("errors", []).append(error)

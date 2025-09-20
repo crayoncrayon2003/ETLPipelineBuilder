@@ -29,11 +29,3 @@ class EtlHookSpecs:
         The schema should conform to a subset of the JSON Schema specification.
         """
         pass
-
-    @hookspec
-    def execute(self, input_data: DataContainer) -> DataContainer:
-        """
-        Execute plugin logic with input data and return output data.
-        Plugin-specific parameters should be passed via constructor.
-        """
-        pass

@@ -6,10 +6,9 @@ import pluggy
 
 from jinja2 import Environment, FileSystemLoader
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -22,6 +21,7 @@ class Jinja2Transformer(BasePlugin):
     (Storage Aware) Transforms rows from a tabular file (local or S3) into a
     structured text file (local or S3) using a Jinja2 template.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "with_jinja2"
@@ -47,30 +47,21 @@ class Jinja2Transformer(BasePlugin):
             "required": ["input_path", "output_path", "template_path"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         template_path = str(self.params.get("template_path"))
 
-        container = DataContainer()
-
         if not all([input_path, output_path, template_path]):
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path', 'output_path', 'template_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path', 'output_path', 'template_path'.")
 
         if not os.path.exists(template_path):
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Template file not found: {template_path}")
-            return container
+            raise FileNotFoundError(f"Template file not found: {template_path}")
 
         try:
             df = storage_adapter.read_df(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         template_dir = os.path.dirname(template_path)
         template_file = os.path.basename(template_path)
@@ -79,9 +70,7 @@ class Jinja2Transformer(BasePlugin):
         try:
             template = env.get_template(template_file)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to load Jinja2 template: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to load Jinja2 template: {str(e)}")
 
         records = df.to_dict(orient='records')
         output_lines = []
@@ -100,16 +89,14 @@ class Jinja2Transformer(BasePlugin):
         try:
             storage_adapter.write_text(full_output_text, output_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to write output file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to write output file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "template_path": template_path,
-            "records_processed": len(records)
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "template_path": template_path,
+                "records_processed": len(records)
+            }
+        )

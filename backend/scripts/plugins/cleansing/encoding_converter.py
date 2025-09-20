@@ -4,10 +4,9 @@ import charset_normalizer
 from typing import Dict, Any
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -19,6 +18,7 @@ class EncodingConverter(BasePlugin):
     """
     (Storage Aware) Converts the character encoding of a text file from local or S3.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "encoding_converter"
@@ -55,28 +55,23 @@ class EncodingConverter(BasePlugin):
             file_name = os.path.basename(file_path)
 
             if result and result.encoding:
-                logger.info(f"Detected encoding for '{file_name}': {result.encoding} (confidence: {result.confidence:.2f})")
+                logger.info(f"[{self.get_plugin_name()}] Detected encoding for '{file_name}': {result.encoding} (confidence: {result.confidence:.2f})")
                 return result.encoding
-            logger.info(f"Could not confidently detect encoding for '{file_name}'. Defaulting to 'latin-1'.")
+            logger.info(f"[{self.get_plugin_name()}] Could not confidently detect encoding for '{file_name}'. Defaulting to 'latin-1'.")
             return 'latin-1'
         except Exception as e:
-            logger.error(f"Error during encoding detection for '{file_path}': {e}. Defaulting to 'latin-1'.")
+            logger.error(f"[{self.get_plugin_name()}] Error during encoding detection for '{file_path}': {e}. Defaulting to 'latin-1'.")
             return 'latin-1'
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         target_encoding = self.params.get("target_encoding", "utf-8")
         source_encoding = self.params.get("source_encoding")
         sample_size = self.params.get("encoding_detection_sample_size", 10000)
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'output_path'.")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_input_path = os.path.join(temp_dir, "input_file_for_conversion")
@@ -86,26 +81,25 @@ class EncodingConverter(BasePlugin):
                 with open(temp_input_path, 'wb') as f:
                     f.write(file_content_bytes)
             except Exception as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Failed to read input file: {str(e)}")
-                return container
+                raise RuntimeError(f"Failed to read input file: {str(e)}")
 
             source_enc = source_encoding or self._detect_encoding(temp_input_path, sample_size)
 
-            logger.info(f"Converting from '{source_enc}' to '{target_encoding}'...")
+            logger.info(f"[{self.get_plugin_name()}] Converting from '{source_enc}' to '{target_encoding}'...")
 
             try:
                 with open(temp_input_path, 'r', encoding=source_enc, errors='replace') as f:
                     content = f.read()
                 storage_adapter.write_text(content, output_path)
+                logger.info(f"[{self.get_plugin_name()}] File successfully converted and saved to '{output_path}'.")
             except Exception as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Encoding conversion failed: {str(e)}")
-                return container
+                raise RuntimeError(f"Encoding conversion failed: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata['original_encoding'] = source_enc
-        container.metadata['converted_to_encoding'] = target_encoding
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "original_encoding": source_enc,
+                "converted_to_encoding": target_encoding
+            }
+        )

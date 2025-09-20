@@ -3,11 +3,10 @@ import pandas as pd
 from typing import Dict, Any, TYPE_CHECKING
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure.storage_adapter import storage_adapter
 from core.infrastructure.spark_session_factory import SparkSessionFactory
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -23,6 +22,7 @@ class SparkTransformer(BasePlugin):
     Transforms data using a SQL query powered by Spark.
     All file I/O is handled via StorageAdapter.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "with_spark"
@@ -49,16 +49,13 @@ class SparkTransformer(BasePlugin):
     def _get_query(self, path: str) -> str:
         return storage_adapter.read_text(path)
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = self.params["input_path"]
         input_encoding = self.params.get("input_encoding", "utf-8")
         output_path = self.params["output_path"]
         query_file = self.params["query_file"]
         table_name = self.params.get("table_name", "source_data")
         use_spark_write = self.params.get("large_dataset", False)
-
-        container = DataContainer()
 
         try:
             sql_query = self._get_query(query_file)
@@ -84,21 +81,18 @@ class SparkTransformer(BasePlugin):
                 storage_adapter.write_df(pandas_result, output_path)
 
         except Exception as e:
-            logger.error(f"Error during Spark transformation: {e}", exc_info=True)
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(str(e))
-            return container
+            raise RuntimeError(f"Error during Spark transformation: {e}")
         finally:
             SparkSessionFactory.stop_spark_session()
             logger.info("Spark session stopped if running locally.")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "query_file": query_file,
-            "table_name": table_name,
-            "used_spark_write": use_spark_write
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "query_file": query_file,
+                "table_name": table_name,
+                "used_spark_write": use_spark_write
+            }
+        )

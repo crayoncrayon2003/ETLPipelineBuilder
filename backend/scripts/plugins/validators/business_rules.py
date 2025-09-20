@@ -3,10 +3,9 @@ import pandas as pd
 from typing import Dict, Any, List
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -18,6 +17,7 @@ class BusinessRulesValidator(BasePlugin):
     """
     (Storage Aware) Validates a file (local or S3) against custom business rules.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "business_rules"
@@ -45,34 +45,25 @@ class BusinessRulesValidator(BasePlugin):
             "required": ["input_path", "output_path", "rules"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         rules = self.params.get("rules", [])
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'output_path'.")
 
         try:
             df = storage_adapter.read_df(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         all_errors: List[str] = []
         for rule in rules:
             rule_name = rule.get('name')
             expression = rule.get('expression')
             if not rule_name or not expression:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Rule missing 'name' or 'expression': {rule}")
-                return container
+                raise ValueError(f"Rule missing 'name' or 'expression': {rule}")
             try:
                 invalid_rows_df = df.query(expression)
                 if not invalid_rows_df.empty:
@@ -80,28 +71,22 @@ class BusinessRulesValidator(BasePlugin):
                                  f"(Expression: '{expression}').")
                     all_errors.append(error_msg)
             except Exception as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Error executing rule '{rule_name}': {str(e)}")
-                return container
+                raise RuntimeError(f"Error executing rule '{rule_name}': {str(e)}")
 
         if all_errors:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Business rule validation failed:\n- " + "\n- ".join(all_errors))
-            return container
+            raise RuntimeError("Business rule validation failed:\n- " + "\n- ".join(all_errors))
 
         try:
             storage_adapter.copy_file(input_path, output_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to copy file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to copy file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "rules_checked": len(rules),
-            "validation_passed": True
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "rules_checked": len(rules),
+                "validation_passed": True
+            }
+        )

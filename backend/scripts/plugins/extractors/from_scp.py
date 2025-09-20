@@ -5,9 +5,8 @@ from typing import Dict, Any
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -21,6 +20,7 @@ class ScpExtractor(BasePlugin):
     it downloads to a temporary local file first, then uploads to S3
     using the StorageAdapter.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_scp"
@@ -40,8 +40,7 @@ class ScpExtractor(BasePlugin):
             "required": ["host", "user", "remote_path", "output_path"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         host = self.params.get("host")
         port = self.params.get("port", 22)
         user = self.params.get("user")
@@ -50,16 +49,10 @@ class ScpExtractor(BasePlugin):
         remote_path = self.params.get("remote_path")
         output_path_str = str(self.params.get("output_path"))
 
-        container = DataContainer()
-
         if not all([host, user, remote_path, output_path_str]):
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'host', 'user', 'remote_path', 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'host', 'user', 'remote_path', 'output_path'.")
         if not password and not key_filepath:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Either 'password' or 'key_filepath' must be provided.")
-            return container
+            raise ValueError("Either 'password' or 'key_filepath' must be provided.")
 
         def basename(path: str) -> str:
             return os.path.basename(path.rstrip('/'))
@@ -71,20 +64,17 @@ class ScpExtractor(BasePlugin):
             try:
                 ssh_client = paramiko.SSHClient()
                 ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                logger.info(f"Connecting to {host} as user '{user}' for SCP download...")
+                logger.info(f"[{self.get_plugin_name()}] Connecting to {host} as user '{user}' for SCP download...")
                 ssh_client.connect(
                     hostname=host, port=port, username=user,
                     password=password, key_filename=key_filepath, timeout=30
                 )
                 with ssh_client.open_sftp() as sftp:
-                    logger.info(f"Downloading '{remote_path}' to temporary location...")
+                    logger.info(f"[{self.get_plugin_name()}] Downloading '{remote_path}' to temporary location...")
                     sftp.get(remote_path, local_temp_path)
-                logger.info(f"Successfully downloaded to {local_temp_path}")
+                logger.info(f"[{self.get_plugin_name()}] Successfully downloaded to {local_temp_path}")
             except Exception as e:
-                logger.error(f"SCP download operation failed: {e}")
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(str(e))
-                return container
+                raise RuntimeError(f"SCP download operation failed: {e}")
             finally:
                 if ssh_client:
                     ssh_client.close()
@@ -92,17 +82,14 @@ class ScpExtractor(BasePlugin):
             try:
                 storage_adapter.upload_local_file(local_temp_path, output_path_str)
             except Exception as e:
-                logger.error(f"Storage upload failed: {e}")
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(str(e))
-                return container
+                raise RuntimeError(f"Storage upload failed: {e}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path_str)
-        container.metadata.update({
-            'source_type': 'scp',
-            'remote_host': host,
-            'remote_path': remote_path
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path_str,
+            metadata={
+                'source_type': 'scp',
+                'remote_host': host,
+                'remote_path': remote_path
+            }
+        )

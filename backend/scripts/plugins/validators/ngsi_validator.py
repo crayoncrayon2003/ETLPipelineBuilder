@@ -4,9 +4,8 @@ from typing import Dict, Any, List
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -18,6 +17,7 @@ class NgsiValidator(BasePlugin):
     """
     (Storage Aware) Validates NGSI entities in a JSON Lines file from local or S3.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "ngsi_validator"
@@ -82,42 +82,19 @@ class NgsiValidator(BasePlugin):
 
         return errors
 
-    def _read_text_content(self, path: str) -> str:
-        logger.info(f"Reading text content from: {path}")
-        if path.startswith("s3://"):
-            try:
-                import s3fs
-                s3 = s3fs.S3FileSystem()
-                with s3.open(path, 'r', encoding='utf-8') as f:
-                    return f.read()
-            except ImportError:
-                raise ImportError("s3fs is required for reading from S3.")
-        else:
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Local file not found: {path}")
-            with open(path, 'r', encoding='utf-8') as f:
-                return f.read()
-
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         ngsi_version = self.params.get("ngsi_version", "ld").lower()
         stop_on_first_error = self.params.get("stop_on_first_error", True)
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing 'input_path' or 'output_path'.")
-            return container
+            raise ValueError("Missing 'input_path' or 'output_path'.")
 
         try:
-            content = self._read_text_content(input_path)
+            content = storage_adapter.read_text(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         lines = content.splitlines()
         all_errors: List[str] = []
@@ -130,39 +107,31 @@ class NgsiValidator(BasePlugin):
             except json.JSONDecodeError:
                 msg = f"Row {i+1}: Invalid JSON format."
                 if stop_on_first_error:
-                    container.set_status(DataContainerStatus.ERROR)
-                    container.add_error(msg)
-                    return container
+                    raise RuntimeError(msg)
                 all_errors.append(msg)
                 continue
 
             entity_errors = self._validate_entity(instance, i + 1, ngsi_version)
             if entity_errors:
                 if stop_on_first_error:
-                    container.set_status(DataContainerStatus.ERROR)
-                    container.add_error("\n".join(entity_errors))
-                    return container
+                    raise RuntimeError("\n".join(entity_errors))
                 all_errors.extend(entity_errors)
 
         if all_errors:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"NGSI validation failed:\n- " + "\n- ".join(all_errors))
-            return container
+            raise RuntimeError(f"NGSI validation failed:\n- " + "\n- ".join(all_errors))
 
         try:
             storage_adapter.write_text(content, output_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to write output file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to write output file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "ngsi_version": ngsi_version,
-            "entities_validated": len(lines),
-            "validation_passed": True
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "ngsi_version": ngsi_version,
+                "entities_validated": len(lines),
+                "validation_passed": True
+            }
+        )

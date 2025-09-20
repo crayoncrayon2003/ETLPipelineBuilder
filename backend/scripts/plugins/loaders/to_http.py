@@ -5,16 +5,22 @@ import json
 from typing import Dict, Any, List
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
+
+def run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+        return loop.create_task(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 class HttpLoader(BasePlugin):
     """
@@ -45,11 +51,11 @@ class HttpLoader(BasePlugin):
             async with session.request(self.method, self.url, data=payload.encode('utf-8'), headers=self.headers) as response:
                 if response.status >= 400:
                     error_text = await response.text()
-                    logger.warning(f"Request {index+1} failed with status {response.status}: {error_text[:200]}")
+                    logger.warning(f"[{self.get_plugin_name()}] Request {index+1} failed with status {response.status}: {error_text[:200]}")
                     response.raise_for_status()
-                logger.info(f"Request {index+1} succeeded.")
+                logger.info(f"[{self.get_plugin_name()}] Request {index+1} succeeded.")
         except aiohttp.ClientError as e:
-            logger.error(f"Request {index+1} failed: {e}")
+            logger.error(f"[{self.get_plugin_name()}] Request {index+1} failed: {e}")
             if self.stop_on_fail:
                 raise
 
@@ -62,8 +68,7 @@ class HttpLoader(BasePlugin):
         if errors:
             raise RuntimeError(f"{len(errors)} HTTP requests failed. First error: {errors[0]}") from errors[0]
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         self.url = self.params.get("url")
         self.method = self.params.get("method", "POST").upper()
@@ -71,12 +76,8 @@ class HttpLoader(BasePlugin):
         self.concurrency = self.params.get("concurrency", 10)
         self.stop_on_fail = self.params.get("stop_on_fail", True)
 
-        container = DataContainer()
-
         if not input_path or not self.url:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'url'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'url'.")
 
         if 'Content-Type' not in self.headers:
             self.headers['Content-Type'] = 'application/json'
@@ -85,30 +86,26 @@ class HttpLoader(BasePlugin):
             file_content = storage_adapter.read_text(input_path)
             payloads = [line.strip() for line in file_content.splitlines() if line.strip()]
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         if not payloads:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Input file contains no valid lines.")
-            return container
+            raise RuntimeError("Input file contains no valid lines.")
 
-        logger.info(f"Sending {len(payloads)} HTTP {self.method} requests to {self.url} with concurrency {self.concurrency}...")
+        logger.info(f"[{self.get_plugin_name()}] Sending {len(payloads)} HTTP {self.method} requests to {self.url} with concurrency {self.concurrency}...")
+
         try:
-            asyncio.run(self._main(payloads))
+            run_async(self._main(payloads))
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"HTTP loading failed: {str(e)}")
-            return container
+            raise RuntimeError(f"HTTP loading failed: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.metadata.update({
-            "input_path": input_path,
-            "url": self.url,
-            "method": self.method,
-            "requests_sent": len(payloads),
-            "concurrency": self.concurrency
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=input_path,
+            metadata={
+                "input_path": input_path,
+                "url": self.url,
+                "method": self.method,
+                "requests_sent": len(payloads),
+                "concurrency": self.concurrency
+            }
+        )

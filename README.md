@@ -368,3 +368,28 @@ sample of config.json
 }
 ```
 
+## 3.5. How to Use : Case5 Persistent Server : The service is controlled by the client.
+Runs as a persistent server that dynamically constructs a pipeline based on client instructions.
+
+start server
+```
+python ./scripts/api/main.py
+```
+
+example of a client request
+```
+python call_controlled_service.py
+```
+
+## 3.5. How to Use : Case6 Persistent Server : The service is controlled by the startup configuration.
+server configuration file is located in backend/scripts/config.
+
+start server
+```
+python ./scripts/api/main.py
+```
+
+example of a client request
+```
+python call_configured_service.py
+```

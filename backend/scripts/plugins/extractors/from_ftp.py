@@ -5,9 +5,8 @@ from typing import Dict, Any
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -21,6 +20,7 @@ class FtpExtractor(BasePlugin):
     It downloads to a temporary local file first, then uses the StorageAdapter
     to move it to the final destination (local or S3).
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "from_ftp"
@@ -60,54 +60,42 @@ class FtpExtractor(BasePlugin):
             "required": ["host", "remote_path", "output_path"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         host = self.params.get("host")
         user = self.params.get("user")
         password = self.params.get("password")
         remote_path = self.params.get("remote_path")
         output_path_str = str(self.params.get("output_path"))
 
-        container = DataContainer()
-
         if not all([host, remote_path, output_path_str]):
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required FTP parameters.")
-            return container
+            raise ValueError("Missing required FTP parameters.")
 
         filename = os.path.basename(remote_path)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             local_temp_path = os.path.join(temp_dir, filename)
 
-            logger.info(f"Connecting to FTP at {host} to download to temporary storage...")
+            logger.info(f"[{self.get_plugin_name()}] Connecting to FTP at {host} to download to temporary storage...")
             try:
                 with ftplib.FTP(host, timeout=60) as ftp:
                     ftp.login(user=user, passwd=password)
                     with open(local_temp_path, 'wb') as f:
                         ftp.retrbinary(f'RETR {remote_path}', f.write)
-                logger.info(f"Successfully downloaded to temporary location: {local_temp_path}")
+                logger.info(f"[{self.get_plugin_name()}] Successfully downloaded to temporary location: {local_temp_path}")
             except ftplib.all_errors as e:
-                logger.error(f"FTP download operation failed: {e}")
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(str(e))
-                return container
+                raise RuntimeError(f"FTP download operation failed: {e}")
 
-            # Upload to final destination
             try:
                 storage_adapter.upload_local_file(local_temp_path, output_path_str)
             except Exception as e:
-                logger.error(f"Storage upload failed: {e}")
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(str(e))
-                return container
+                raise RuntimeError(f"Storage upload failed: {e}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path_str)
-        container.metadata.update({
-            'source_type': 'ftp',
-            'ftp_host': host,
-            'remote_path': remote_path
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path_str,
+            metadata={
+                'source_type': 'ftp',
+                'ftp_host': host,
+                'remote_path': remote_path
+            }
+        )

@@ -2,10 +2,9 @@ import os
 from typing import Dict, Any, Optional, List
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -18,6 +17,7 @@ class NullHandler(BasePlugin):
     (Storage Aware) Handles missing values in a tabular file (local or S3),
     preserving the original format.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "null_handler"
@@ -37,8 +37,7 @@ class NullHandler(BasePlugin):
             "required": ["input_path", "output_path", "strategy"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         strategy = self.params.get("strategy")
@@ -46,22 +45,16 @@ class NullHandler(BasePlugin):
         fill_value = self.params.get("value")
         fill_method = self.params.get("method")
 
-        container = DataContainer()
-
         if not all([input_path, output_path, strategy]):
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path', 'output_path', and 'strategy'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path', 'output_path', and 'strategy'.")
 
         try:
             df = storage_adapter.read_df(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         initial_nulls = df.isnull().sum().sum()
-        logger.info(f"Initial total nulls: {initial_nulls}")
+        logger.info(f"[{self.get_plugin_name()}] Initial total nulls: {initial_nulls}")
 
         processed_df = df.copy()
         try:
@@ -70,31 +63,26 @@ class NullHandler(BasePlugin):
             elif strategy == 'fill':
                 processed_df.fillna(value=fill_value, method=fill_method, inplace=True)
             else:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Unsupported strategy: '{strategy}'")
-                return container
+                raise ValueError(f"Unsupported strategy: '{strategy}'")
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Null handling failed: {str(e)}")
-            return container
+            raise RuntimeError(f"Null handling failed: {str(e)}")
 
         final_nulls = processed_df.isnull().sum().sum()
-        logger.info(f"Final total nulls: {final_nulls}. Saving to '{output_path}'.")
+        logger.info(f"[{self.get_plugin_name()}] Final total nulls: {final_nulls}. Saving to '{output_path}'.")
 
         try:
             storage_adapter.write_df(processed_df, output_path)
+            logger.info(f"[{self.get_plugin_name()}] File successfully saved to '{output_path}'.")
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to write output file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to write output file: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "strategy": strategy,
-            "initial_nulls": int(initial_nulls),
-            "final_nulls": int(final_nulls)
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "strategy": strategy,
+                "initial_nulls": int(initial_nulls),
+                "final_nulls": int(final_nulls)
+            }
+        )

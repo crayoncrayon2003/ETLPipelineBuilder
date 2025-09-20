@@ -3,9 +3,8 @@ from typing import Dict, Any, Union, List
 import pluggy
 
 from core.infrastructure import storage_adapter
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -18,6 +17,7 @@ class DuplicateRemover(BasePlugin):
     (Storage Aware) Removes duplicate rows from a tabular file (local or S3),
     preserving the original file format.
     """
+
     @hookimpl
     def get_plugin_name(self) -> str:
         return "duplicate_remover"
@@ -53,47 +53,38 @@ class DuplicateRemover(BasePlugin):
             "required": ["input_path", "output_path"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path = str(self.params.get("input_path"))
         output_path = str(self.params.get("output_path"))
         subset: Union[List[str], None] = self.params.get("subset")
         keep: Union[str, bool] = self.params.get("keep", "first")
 
-        container = DataContainer()
-
         if not input_path or not output_path:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'output_path'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'output_path'.")
 
         try:
             df = storage_adapter.read_df(input_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Failed to read input file: {str(e)}")
-            return container
+            raise RuntimeError(f"Failed to read input file: {str(e)}")
 
         initial_row_count = len(df)
-        logger.info(f"Initial rows: {initial_row_count}")
+        logger.info(f"[{self.get_plugin_name()}] Initial rows: {initial_row_count}")
 
         try:
             deduplicated_df = df.drop_duplicates(subset=subset, keep=keep, inplace=False)
             rows_removed = initial_row_count - len(deduplicated_df)
-            logger.info(f"Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
+            logger.info(f"[{self.get_plugin_name()}] Removed {rows_removed} duplicate rows. Saving to '{output_path}'.")
 
             storage_adapter.write_df(deduplicated_df, output_path)
         except Exception as e:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(f"Deduplication or saving failed: {str(e)}")
-            return container
+            raise RuntimeError(f"Deduplication or saving failed: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.add_file_path(output_path)
-        container.metadata.update({
-            "input_path": input_path,
-            "rows_removed": rows_removed,
-            "deduplicated": True
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            output_path=output_path,
+            metadata={
+                "input_path": input_path,
+                "rows_removed": rows_removed,
+                "deduplicated": True
+            }
+        )

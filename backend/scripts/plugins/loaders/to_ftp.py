@@ -4,10 +4,9 @@ import tempfile
 from typing import Dict, Any
 import pluggy
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.infrastructure import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
-
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -37,20 +36,15 @@ class FtpLoader(BasePlugin):
             "required": ["input_path", "host"]
         }
 
-    @hookimpl
-    def execute(self, input_data: DataContainer) -> DataContainer:
+    def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         input_path_str = str(self.params.get("input_path"))
         host = self.params.get("host")
         user = self.params.get("user")
         password = self.params.get("password")
         remote_dir = self.params.get("remote_dir", "/")
 
-        container = DataContainer()
-
         if not input_path_str or not host:
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error("Missing required parameters: 'input_path' and 'host'.")
-            return container
+            raise ValueError("Missing required parameters: 'input_path' and 'host'.")
 
         def basename(path: str) -> str:
             return os.path.basename(path.rstrip('/'))
@@ -63,7 +57,7 @@ class FtpLoader(BasePlugin):
 
             try:
                 if input_path_str.startswith("s3://"):
-                    logger.info(f"Downloading '{input_path_str}' from S3...")
+                    logger.info(f"[{self.get_plugin_name()}] Downloading '{input_path_str}' from S3...")
                     file_content_bytes = storage_adapter.read_bytes(input_path_str)
                     with open(temp_local_path, 'wb') as f:
                         f.write(file_content_bytes)
@@ -74,9 +68,7 @@ class FtpLoader(BasePlugin):
                 if not os.path.isfile(local_file_to_upload):
                     raise FileNotFoundError(f"File not found: {local_file_to_upload}")
             except Exception as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"Failed to prepare file for upload: {str(e)}")
-                return container
+                raise RuntimeError(f"Failed to prepare file for upload: {str(e)}")
 
             remote_filename = basename(local_file_to_upload)
 
@@ -87,30 +79,28 @@ class FtpLoader(BasePlugin):
                         try:
                             ftp.cwd(remote_dir)
                         except ftplib.error_perm:
-                            logger.warning(f"Remote directory '{remote_dir}' not found. Attempting to create...")
+                            logger.warning(f"[{self.get_plugin_name()}] Remote directory '{remote_dir}' not found. Attempting to create...")
                             for part in split_path_parts(remote_dir):
                                 try:
                                     ftp.mkd(part)
                                 except ftplib.error_perm:
                                     pass
                                 ftp.cwd(part)
-                            logger.info(f"Navigated to '{remote_dir}'.")
+                            logger.info(f"[{self.get_plugin_name()}] Navigated to '{remote_dir}'.")
 
-                    logger.info(f"Uploading '{remote_filename}' to FTP...")
+                    logger.info(f"[{self.get_plugin_name()}] Uploading '{remote_filename}' to FTP...")
                     with open(local_file_to_upload, 'rb') as local_file:
                         ftp.storbinary(f'STOR {remote_filename}', local_file)
-                    logger.info(f"Upload successful.")
+                    logger.info(f"[{self.get_plugin_name()}] Upload successful.")
             except ftplib.all_errors as e:
-                container.set_status(DataContainerStatus.ERROR)
-                container.add_error(f"FTP upload failed: {str(e)}")
-                return container
+                raise RuntimeError(f"FTP upload failed: {str(e)}")
 
-        container.set_status(DataContainerStatus.SUCCESS)
-        container.metadata.update({
-            "input_path": input_path_str,
-            "ftp_host": host,
-            "remote_dir": remote_dir,
-            "uploaded_filename": remote_filename
-        })
-        container.add_history(self.get_plugin_name())
-        return container
+        return self.finalize_container(
+            container,
+            metadata={
+                "input_path": input_path_str,
+                "ftp_host": host,
+                "remote_dir": remote_dir,
+                "uploaded_filename": remote_filename
+            }
+        )
