@@ -7,7 +7,7 @@ import re
 import base64
 import boto3
 from botocore.exceptions import ClientError
-
+import portalocker
 from core.infrastructure.env_detector import is_running_on_aws
 
 from utils.logger import setup_logger
@@ -18,8 +18,15 @@ logger = setup_logger(__name__, level=log_level)
 # ==============================================================================
 # Common Exception Class
 # ==============================================================================
-class SecretResolutionError(Exception):
-    """Custom exception for secret resolution failures."""
+class SecretResolverError(Exception):
+    pass
+
+class SecretReadError(SecretResolverError):
+    """Custom exception for secret read/resolution failures."""
+    pass
+
+class SecretWriteError(SecretResolverError):
+    """Custom exception for secret writing failures."""
     pass
 
 # ==============================================================================
@@ -30,11 +37,11 @@ class BaseSecretResolver(ABC):
     Abstract base class for secret resolution strategies.
     """
     @abstractmethod
-    def resolve(self, secret_reference: str) -> Optional[str]:
-        """
-        Resolves a secret by its reference string.
-        Returns the secret value as a string, or None if not found.
-        """
+    def read(self, secret_reference: str) -> Optional[str]:
+        pass
+
+    @abstractmethod
+    def write(self, secret_reference: str, secret_value: str, **kwargs: Any) -> None:
         pass
 
 # ==============================================================================
@@ -42,207 +49,255 @@ class BaseSecretResolver(ABC):
 # ==============================================================================
 class DotEnvSecretResolver(BaseSecretResolver):
     """
-    Resolves secrets from a local .env file for local development.
-    Supports references like "${env://MY_VARIABLE}".
+    Reads secrets from a local .env file for local development.
     """
     def __init__(self):
-        # current_path = os.path.abspath(__file__)
-        # for _ in range(4):
-        #     current_path = os.path.dirname(current_path)
-        # dotenv_path = os.path.join(current_path, '.env')
-        #
-        # if os.path.exists(dotenv_path):
-        #     logger.info(f"Loading secrets from local .env file: {dotenv_path}")
-        #     load_dotenv(dotenv_path=dotenv_path)
-        # else:
-        #     logger.info(f"Warning: .env file not found at {dotenv_path}. Will rely on existing environment variables.")
+        self.dotenv_path = find_dotenv()
 
-        dotenv_path = find_dotenv()
-        if dotenv_path:
-            logger.info(f"Loading secrets from local .env file: {dotenv_path}")
-            load_dotenv(dotenv_path=dotenv_path, override=True)
+        if self.dotenv_path:
+            logger.info(f"Loading secrets from local .env file: {self.dotenv_path}")
+            load_dotenv(dotenv_path=self.dotenv_path, override=True)
         else:
             logger.warning(".env file not found. Will rely on existing environment variables.")
+            self.dotenv_path = os.path.join(os.getcwd(), '.env')
+            logger.info(f"No existing .env file found. New '.env' file will be created at '{self.dotenv_path}' if writing is attempted.")
 
-
-    def resolve(self, secret_reference: str) -> Optional[str]:
-        # 'env://' プレフィックスを想定
+    def read(self, secret_reference: str) -> Optional[str]:
         env_match = re.match(r"^env://(.+)$", secret_reference)
         if env_match:
             env_var_name = env_match.group(1)
             return os.getenv(env_var_name)
         else:
-            logger.warning(f"DotEnvSecretResolver received unsupported reference format: '{secret_reference}'. Expected 'env://VARIABLE_NAME'.")
+            logger.warning(f"DotEnvSecretResolver received unsupported reference format for read: '{secret_reference}'.")
             return None
 
+    def write(self, secret_reference: str, secret_value: str, **kwargs: Any) -> None:
+        env_match = re.match(r"^env://(.+)$", secret_reference)
+        if not env_match:
+            raise SecretWriteError(f"DotEnvSecretResolver received unsupported reference format for writing: '{secret_reference}'.")
+
+        env_var_name = env_match.group(1)
+
+        if not self.dotenv_path:
+            raise SecretWriteError("No .env file path could be determined for writing.")
+
+        env_lines = []
+        if os.path.exists(self.dotenv_path):
+            with open(self.dotenv_path, 'r', encoding='utf-8') as f:
+                env_lines = f.readlines()
+
+        new_env_lines = []
+        updated = False
+        for line in env_lines:
+            if line.strip().startswith(f"{env_var_name}="):
+                current_value = line.strip().split("=", 1)[1]
+                if current_value == secret_value:
+                    logger.debug(f"No change for {env_var_name}, skipping write.")
+                    return
+                new_env_lines.append(f"{env_var_name}={secret_value}\n")
+                updated = True
+            else:
+                new_env_lines.append(line)
+
+        if not updated:
+            if new_env_lines and not new_env_lines[-1].endswith('\n'):
+                new_env_lines.append('\n')
+            new_env_lines.append(f"{env_var_name}={secret_value}\n")
+
+        try:
+            # ★対応① ファイルロック導入
+            with open(self.dotenv_path, 'w', encoding='utf-8') as f:
+                with portalocker.Lock(f, timeout=3):
+                    f.writelines(new_env_lines)
+
+            logger.info(f"Secret '{env_var_name}' successfully written to .env file: {self.dotenv_path}")
+            os.environ[env_var_name] = secret_value
+            logger.info(f"Secret '{env_var_name}' updated in current process environment variables.")
+
+        except IOError as e:
+            raise SecretWriteError(f"Failed to write to .env file: {e}")
+        except Exception as e:
+            raise SecretWriteError(f"Failed to write .env secret: {e}")
 
 # ==============================================================================
-# Resolving secrets via AWS service
+# Reading/Writing secrets via AWS service
 # ==============================================================================
 class AWSSecretResolver(BaseSecretResolver):
     """
-    Resolves secrets from AWS Secrets Manager, Parameter Store, and decrypts with KMS.
-    Supports explicit reference formats:
-    - "aws_secretsmanager://SECRET_NAME[@JSON_KEY]"
-    - "aws_parameterstore://PARAMETER_NAME[?with_decryption=false]"
-    - "aws_kms_decrypt://BASE64_ENCODED_CIPHERTEXT"
+    AWS Secrets Manager / Parameter Store / KMS に対応した Secret Resolver
+    読み書き双方をサポートする
     """
-    def __init__(self):
-        self._cache: Dict[str, str] = {}
-        self.secretsmanager_client = None
-        self.ssm_client = None
-        self.kms_client = None
 
+    def __init__(self):
+        super().__init__()
         try:
             session = boto3.Session()
-            region = session.region_name or os.getenv("AWS_REGION", "ap-northeast-1")
-            logger.info(f"AWS region used for boto3 clients: {region}")
-
-            self.secretsmanager_client = boto3.client('secretsmanager',region_name=region)
-            self.ssm_client = boto3.client('ssm',region_name=region)
-            self.kms_client = boto3.client('kms',region_name=region)
-            logger.info("AWS Secret Resolver initialized with Secrets Manager, Parameter Store, and KMS clients.")
-        except ImportError:
-            logger.error("Error: boto3 is not installed. AWSSecretResolver cannot be used.")
-            self.secretsmanager_client = None
-            self.ssm_client = None
-            self.kms_client = None
+            region = session.region_name or "ap-northeast-1"
+            self.secretsmanager_client = boto3.client("secretsmanager", region_name=region)
+            self.ssm_client = boto3.client("ssm", region_name=region)
+            self.kms_client = boto3.client("kms", region_name=region)
+            logger.info(f"AWSSecretResolver initialized (region={region})")
         except Exception as e:
-            logger.error(f"Error initializing boto3 clients: {e}")
+            logger.error(f"Failed to initialize AWS clients: {e}")
             self.secretsmanager_client = None
             self.ssm_client = None
             self.kms_client = None
 
-    def _get_secret_from_secrets_manager(self, secret_name: str, json_key: Optional[str] = None) -> Optional[str]:
-        """
-        Helper to get a secret from AWS Secrets Manager.
-        """
-        if not self.secretsmanager_client:
-            raise SecretResolutionError("Secrets Manager client not initialized.")
+    # ---------------------------------------------------------------------
+    # Public Interface (BaseSecretResolver 実装)
+    # ---------------------------------------------------------------------
+    def read(self, secret_reference: str) -> Optional[str]:
+        if secret_reference.startswith("aws_secretsmanager://"):
+            return self._read_from_secretsmanager(secret_reference)
+        elif secret_reference.startswith("aws_parameterstore://"):
+            return self._read_from_parameterstore(secret_reference)
+        elif secret_reference.startswith("aws_kms_decrypt://"):
+            return self._decrypt_with_kms(secret_reference)
+        else:
+            logger.warning(f"Unsupported secret reference format: {secret_reference}")
+            return None
 
+    def write(self, secret_reference: str, secret_value: str, **kwargs: Any) -> None:
+        if secret_reference.startswith("aws_secretsmanager://"):
+            return self._write_to_secretsmanager(secret_reference, secret_value)
+        elif secret_reference.startswith("aws_parameterstore://"):
+            return self._write_to_parameterstore(secret_reference, secret_value)
+        elif secret_reference.startswith("aws_kms_encrypt://"):
+            return self._encrypt_with_kms(secret_reference, secret_value, kwargs.get("encryption_context"))
+        else:
+            logger.warning(f"Unsupported write target: {secret_reference}")
+            return None
+
+    # ---------------------------------------------------------------------
+    # AWS Secrets Manager
+    # ---------------------------------------------------------------------
+    def _read_from_secretsmanager(self, secret_reference: str) -> Optional[str]:
+        sm_match = re.match(r"^aws_secretsmanager://([^@]+)(?:@(.+))?$", secret_reference)
+        if not sm_match:
+            return None
+        secret_name = sm_match.group(1)
+        json_key = sm_match.group(2)
         try:
-            if secret_name in self._cache:
-                secret_string = self._cache[secret_name]
-            else:
-                logger.info(f"Fetching secret '{secret_name}' from AWS Secrets Manager...")
-                response = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
-                secret_string = response.get('SecretString')
-                if secret_string:
-                    self._cache[secret_name] = secret_string
-
+            response = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
+            secret_string = response.get("SecretString")
             if not secret_string:
                 return None
-
             if json_key:
-                secret_data = json.loads(secret_string)
-                if json_key not in secret_data:
-                    logger.warning(f"Key '{json_key}' not found in secret '{secret_name}' (Secrets Manager).")
+                try:
+                    secret_data = json.loads(secret_string)
+                    return str(secret_data.get(json_key))
+                except json.JSONDecodeError:
+                    logger.warning(f"Secret '{secret_name}' is not JSON but key '{json_key}' requested.")
                     return None
-                return str(secret_data.get(json_key))
-            else:
-                return secret_string
-
-        except self.secretsmanager_client.exceptions.ResourceNotFoundException:
-            logger.warning(f"Secret '{secret_name}' not found in AWS Secrets Manager.")
-            return None
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Failed to parse or find key '{json_key}' in secret '{secret_name}' (Secrets Manager): {e}")
-            raise SecretResolutionError(f"Failed to process Secrets Manager secret '{secret_name}': {e}")
-        except Exception as e:
-            logger.error(f"Failed to retrieve secret '{secret_name}' from Secrets Manager: {e}")
-            raise SecretResolutionError(f"Failed to retrieve Secrets Manager secret '{secret_name}': {e}")
-
-    def _get_parameter_from_parameter_store(self, parameter_name: str, with_decryption: bool = True) -> Optional[str]:
-        """
-        Helper to get a parameter from AWS Systems Manager Parameter Store.
-        """
-        if not self.ssm_client:
-            raise SecretResolutionError("Parameter Store client not initialized.")
-
-        cache_key = f"ssm://{parameter_name}?dec={with_decryption}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
-        try:
-            logger.info(f"Fetching parameter '{parameter_name}' from AWS Parameter Store (decryption: {with_decryption})...")
-            response = self.ssm_client.get_parameter(Name=parameter_name, WithDecryption=with_decryption)
-            param_value = response['Parameter']['Value']
-            self._cache[cache_key] = param_value
-            return param_value
-        except self.ssm_client.exceptions.ParameterNotFound:
-            logger.warning(f"Parameter '{parameter_name}' not found in AWS Parameter Store.")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to retrieve parameter '{parameter_name}' from Parameter Store: {e}")
-            raise SecretResolutionError(f"Failed to retrieve Parameter Store parameter '{parameter_name}': {e}")
-
-    def _decrypt_with_kms(self, ciphertext_blob_b64: str) -> Optional[str]:
-        """
-        Helper to decrypt a Base64 encoded ciphertext using AWS KMS.
-        """
-        if not self.kms_client:
-            raise SecretResolutionError("KMS client not initialized.")
-
-        try:
-            ciphertext_blob = base64.b64decode(ciphertext_blob_b64)
-            logger.info("Decrypting data with AWS KMS...")
-            response = self.kms_client.decrypt(CiphertextBlob=ciphertext_blob)
-            return response['Plaintext'].decode('utf-8')
-        except base64.binascii.Error as e:
-            raise SecretResolutionError(f"Invalid Base64 string for KMS decryption: {e}")
-        except Exception as e:
-            logger.error(f"Failed to decrypt with KMS: {e}")
-            raise SecretResolutionError(f"Failed to decrypt with KMS: {e}")
-
-    def resolve(self, secret_reference: str) -> Optional[str]:
-        if not (self.secretsmanager_client and self.ssm_client and self.kms_client):
-            logger.error("One or more AWS clients are not initialized. Cannot resolve AWS secrets.")
+            return secret_string
+        except ClientError as e:
+            logger.error(f"Failed to read secret '{secret_name}': {e}")
             return None
 
-        # Secrets Manager
+    def _write_to_secretsmanager(self, secret_reference: str, secret_value: str) -> None:
         sm_match = re.match(r"^aws_secretsmanager://([^@]+)(?:@(.+))?$", secret_reference)
-        if sm_match:
-            secret_name = sm_match.group(1)
-            json_key = sm_match.group(2)
-            return self._get_secret_from_secrets_manager(secret_name, json_key)
+        if not sm_match:
+            logger.error(f"Invalid Secrets Manager reference: {secret_reference}")
+            return
+        secret_name = sm_match.group(1)
+        json_key = sm_match.group(2)
+        try:
+            current_secret = None
+            try:
+                resp = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
+                current_secret = resp.get("SecretString")
+            except self.secretsmanager_client.exceptions.ResourceNotFoundException:
+                logger.info(f"Creating new secret '{secret_name}'...")
+                self.secretsmanager_client.create_secret(Name=secret_name, SecretString=secret_value)
+                return
+            secret_payload = secret_value
+            if json_key:
+                try:
+                    data = json.loads(current_secret or "{}")
+                except json.JSONDecodeError:
+                    data = {}
+                data[json_key] = secret_value
+                secret_payload = json.dumps(data)
+            self.secretsmanager_client.put_secret_value(SecretId=secret_name, SecretString=secret_payload)
+            logger.info(f"Secret '{secret_name}' updated successfully.")
+        except Exception as e:
+            logger.error(f"Failed to write secret '{secret_name}': {e}")
+            raise
 
-        # Parameter Store
-        ps_match = re.match(r"^aws_parameterstore://([^?]+)(?:\?(.*))?$", secret_reference)
-        if ps_match:
-            parameter_name = ps_match.group(1)
-            query_string = ps_match.group(2)
-            with_decryption = True
-            if query_string:
-                query_params = dict(re.findall(r"([^=]+)=([^&]+)", query_string))
-                if 'with_decryption' in query_params:
-                    with_decryption = query_params['with_decryption'].lower() == 'true'
-            return self._get_parameter_from_parameter_store(parameter_name, with_decryption)
+    # ---------------------------------------------------------------------
+    # AWS Parameter Store
+    # ---------------------------------------------------------------------
+    def _read_from_parameterstore(self, secret_reference: str) -> Optional[str]:
+        ps_match = re.match(r"^aws_parameterstore://(.+)$", secret_reference)
+        if not ps_match:
+            return None
+        param_name = ps_match.group(1)
+        try:
+            response = self.ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+            return response["Parameter"]["Value"]
+        except ClientError as e:
+            logger.error(f"Failed to read parameter '{param_name}': {e}")
+            return None
 
-        # KMS Decrypt
+    def _write_to_parameterstore(self, secret_reference: str, secret_value: str) -> None:
+        ps_match = re.match(r"^aws_parameterstore://(.+)$", secret_reference)
+        if not ps_match:
+            logger.error(f"Invalid Parameter Store reference: {secret_reference}")
+            return
+        param_name = ps_match.group(1)
+        try:
+            self.ssm_client.put_parameter(
+                Name=param_name,
+                Value=secret_value,
+                Type="SecureString",
+                Overwrite=True
+            )
+            logger.info(f"Parameter '{param_name}' updated successfully.")
+        except Exception as e:
+            logger.error(f"Failed to write parameter '{param_name}': {e}")
+            raise
+
+    # ---------------------------------------------------------------------
+    # AWS KMS Encrypt/Decrypt
+    # ---------------------------------------------------------------------
+    def _decrypt_with_kms(self, secret_reference: str) -> Optional[str]:
         kms_match = re.match(r"^aws_kms_decrypt://(.+)$", secret_reference)
-        if kms_match:
-            ciphertext_b64 = kms_match.group(1)
-            return self._decrypt_with_kms(ciphertext_b64)
+        if not kms_match:
+            return None
+        ciphertext_b64 = kms_match.group(1)
+        try:
+            ciphertext = base64.b64decode(ciphertext_b64)
+            response = self.kms_client.decrypt(CiphertextBlob=ciphertext)
+            return response["Plaintext"].decode("utf-8")
+        except Exception as e:
+            logger.error(f"Failed to decrypt value with KMS: {e}")
+            return None
 
-        logger.warning(f"Unsupported secret reference format for AWSResolver: '{secret_reference}'. "
-                       "Expected 'aws_secretsmanager://...', 'aws_parameterstore://...', or 'aws_kms_decrypt://...'.")
-        return None
+    def _encrypt_with_kms(self, secret_reference: str, plaintext: str, encryption_context: Optional[Dict[str, str]] = None) -> str:
+        kms_match = re.match(r"^aws_kms_encrypt://(.+)$", secret_reference)
+        if not kms_match:
+            raise ValueError(f"Invalid KMS encrypt reference: {secret_reference}")
+        kms_key_id = kms_match.group(1)
+        try:
+            response = self.kms_client.encrypt(
+                KeyId=kms_key_id,
+                Plaintext=plaintext.encode("utf-8"),
+                EncryptionContext=encryption_context or {}
+            )
+            return base64.b64encode(response["CiphertextBlob"]).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Failed to encrypt value with KMS: {e}")
+            raise
 
 # ==============================================================================
 # Factory
 # ==============================================================================
 def get_secret_resolver() -> BaseSecretResolver:
-    """
-    Factory function that returns the appropriate secret resolver
-    based on the execution environment.
-    """
     is_aws_env = is_running_on_aws()
     if is_aws_env:
-        logger.info("AWS environment detected. Using AWSSecretResolver for secret resolution.")
         return AWSSecretResolver()
     else:
-        logger.info("Local environment detected. Using DotEnvSecretResolver for secret resolution.")
         return DotEnvSecretResolver()
 
-# Create a singleton instance of the appropriate resolver.
+# Singleton instance
 secret_resolver = get_secret_resolver()

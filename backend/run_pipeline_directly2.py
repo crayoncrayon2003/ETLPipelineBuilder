@@ -41,28 +41,26 @@ def main():
 
     try:
         logger.info("[Step 1: from_http]")
-        http_params = {
-            "url": "http://localhost:8080/device_data.csv",
-            "output_path": http_output_file
-        }
         http_step_config = {
             "name": "step1_from_http",
             "plugin": "from_http",
-            "params": http_params
+            "params": {
+                "url": "http://localhost:8080/device_data.csv",
+                "output_path": http_output_file
+            }
         }
         http_result_container = step_executor.execute_step(http_step_config)
 
         logger.info("[Step 2: with_duckdb]")
-        duckdb_params = {
-            "input_path": http_result_container.get_primary_file_path(),
-            "output_path": duckdb_output_file,
-            "query_file": sql_file,
-            "table_name": "source_data"
-        }
         duckdb_step_config = {
             "name": "step2_with_spark",
             "plugin": "with_spark",
-            "params": duckdb_params
+            "params": {
+                "input_path": http_result_container.get_primary_file_path(),
+                "output_path": duckdb_output_file,
+                "query_file": sql_file,
+                "table_name": "source_data"
+            }
         }
         duckdb_result_container = step_executor.execute_step(
             duckdb_step_config,
@@ -70,15 +68,14 @@ def main():
         )
 
         logger.info("[Step 3: with_jinja2]")
-        jinja2_params = {
-            "input_path": duckdb_result_container.get_primary_file_path(),
-            "output_path": jinja2_output_file,
-            "template_path": j2_template_file
-        }
         jinja2_step_config = {
             "name": "step3_with_jinja2",
             "plugin": "with_jinja2",
-            "params": jinja2_params
+            "params": {
+                "input_path": duckdb_result_container.get_primary_file_path(),
+                "output_path": jinja2_output_file,
+                "template_path": j2_template_file
+            }
         }
         jinja2_result_container = step_executor.execute_step(
             jinja2_step_config,

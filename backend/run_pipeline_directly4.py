@@ -40,12 +40,14 @@ def main():
     step_executor = StepExecutor()
 
     try:
-        logger.info("[Step 1: from_http]")
+        logger.info("[Step 1: from_http_with_basic_auth]")
         http_step_config = {
             "name": "step1_from_http",
-            "plugin": "from_http",
+            "plugin": "from_http_with_basic_auth",
             "params": {
                 "url": "http://localhost:8080/device_data.csv",
+                "username" : "${secrets.env://MY_HTTP_BASIC_USERNAME}",
+                "password" : "${secrets.env://MY_HTTP_BASIC_PASSWORD}",
                 "output_path": http_output_file
             }
         }

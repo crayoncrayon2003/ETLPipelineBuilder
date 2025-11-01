@@ -9,6 +9,7 @@ from core.infrastructure import storage_adapter
 from core.infrastructure.storage_path_utils import normalize_path
 from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
+from core.infrastructure import secret
 from utils.logger import setup_logger
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -46,6 +47,11 @@ class HttpBasicAuthExtractor(BasePlugin):
         output_path_str = str(self.params.get("output_path"))
         username = self.params.get("username")
         password = self.params.get("password")
+
+        if username:
+            username = secret.read_secret(username)
+        if password:
+            password = secret.read_secret(password)
 
         if not all([url, output_path_str, username, password]):
             raise ValueError("Missing required parameters: 'url', 'output_path', 'username', 'password'.")
