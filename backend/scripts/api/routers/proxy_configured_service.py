@@ -19,7 +19,12 @@ async def configured_service_named(
     config_path = os.path.normpath(os.path.join(current_dir, "..", "config", f"{config_name}.json"))
 
     try:
-        result = process_configured_request(body_bytes, config_path, headers, project_root)
+        result = process_configured_request(
+            body_bytes=body_bytes,
+            config_path=config_path,
+            headers=headers,
+            project_root=project_root
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

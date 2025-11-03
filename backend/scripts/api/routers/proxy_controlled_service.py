@@ -28,7 +28,11 @@ async def controlled_service(
     }
 
     try:
-        result = process_controlled_request(body_bytes, payload, headers)
+        result = process_controlled_request(
+            body_bytes=body_bytes,
+            payload=payload,
+            headers=headers
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
