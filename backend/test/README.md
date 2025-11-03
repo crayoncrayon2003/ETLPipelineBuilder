@@ -13,10 +13,3 @@ source env/bin/activate
 cd backend/test
 python run_all_tests.py
 ```
-
-# 3. Run Tests
-```
-pydeps scripts/core --max-bacon=2 --show-deps --noshow > core_deps.txt
-pydeps scripts/core --max-bacon=2 --show-deps --noshow --reverse > core_deps_reverse.txt
-pydeps scripts/core --max-bacon=2 --show-deps -o core_deps.svg
-```
