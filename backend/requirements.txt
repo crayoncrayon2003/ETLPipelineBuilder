@@ -37,7 +37,7 @@ requests==2.32.3
 aiohttp==3.9.5
 
 # For SCP/SFTP plugins
-paramiko==3.4.0
+paramiko==4.0.0
 
 # For Database plugins
 sqlalchemy==2.0.31

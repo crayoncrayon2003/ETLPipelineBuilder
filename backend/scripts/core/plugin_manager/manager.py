@@ -20,14 +20,14 @@ class FrameworkManager:
     Manages the ETL framework's plugin system using pluggy.
     """
     def __init__(self):
-        # pluggyのPluginManagerはフック仕様の管理にのみ使用
+        # The pluggy PluginManager is used only for managing hook specifications
         self._pm = pluggy.PluginManager("etl_framework")
         self._pm.add_hookspecs(hooks.EtlHookSpecs)
 
-        # プラグイン名とインスタンスのマッピングを保持するキャッシュ
+        # Cache mapping plugin names to their instances
         self._plugin_name_cache: Dict[str, Any] = {}
 
-        # プラグイン検出とインスタンス化
+        # Discover and instantiate plugins
         self._discover_and_instantiate_plugins(plugins)
 
     def _discover_and_instantiate_plugins(self, package):
@@ -79,5 +79,5 @@ class FrameworkManager:
         instance.set_params(params)
         return instance.execute(input_data=inputs)
 
-# シングルトンインスタンスを作成
+# Create a singleton instance
 framework_manager = FrameworkManager()

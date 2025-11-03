@@ -52,7 +52,7 @@ class DotEnvSecretResolver(BaseSecretResolver):
     Reads secrets from a local .env file for local development.
     """
     def __init__(self):
-        self.dotenv_path = find_dotenv()
+        self.dotenv_path = find_dotenv(usecwd=True)
 
         if self.dotenv_path:
             logger.info(f"Loading secrets from local .env file: {self.dotenv_path}")
@@ -105,11 +105,8 @@ class DotEnvSecretResolver(BaseSecretResolver):
             new_env_lines.append(f"{env_var_name}={secret_value}\n")
 
         try:
-            # ★対応① ファイルロック導入
-            with open(self.dotenv_path, 'w', encoding='utf-8') as f:
-                with portalocker.Lock(f, timeout=3):
-                    f.writelines(new_env_lines)
-
+            with portalocker.Lock(self.dotenv_path, 'w', timeout=3) as f:
+                f.writelines(new_env_lines)
             logger.info(f"Secret '{env_var_name}' successfully written to .env file: {self.dotenv_path}")
             os.environ[env_var_name] = secret_value
             logger.info(f"Secret '{env_var_name}' updated in current process environment variables.")
@@ -124,8 +121,8 @@ class DotEnvSecretResolver(BaseSecretResolver):
 # ==============================================================================
 class AWSSecretResolver(BaseSecretResolver):
     """
-    AWS Secrets Manager / Parameter Store / KMS に対応した Secret Resolver
-    読み書き双方をサポートする
+    A Secret Resolver compatible with AWS Secrets Manager, Parameter Store, and KMS,
+    supporting both read and write operations
     """
 
     def __init__(self):
@@ -144,7 +141,7 @@ class AWSSecretResolver(BaseSecretResolver):
             self.kms_client = None
 
     # ---------------------------------------------------------------------
-    # Public Interface (BaseSecretResolver 実装)
+    # Public Interface (BaseSecretResolver Implementation)
     # ---------------------------------------------------------------------
     def read(self, secret_reference: str) -> Optional[str]:
         if secret_reference.startswith("aws_secretsmanager://"):

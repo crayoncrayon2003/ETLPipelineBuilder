@@ -1,10 +1,8 @@
 from typing import Any, Dict, Optional
 import re
 
-# 内部用: dict 内のすべての ${secrets.xxx} を再帰的に解決
-def _resolve_secrets_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str, Any]:
+def read_secret_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str, Any]:
     if resolver is None:
-        # 遅延 import で circular import を回避
         from core.infrastructure.secret_resolver import secret_resolver as resolver
 
     secret_pattern = re.compile(r"\${secrets\.([^}]+)}")
@@ -19,10 +17,10 @@ def _resolve_secrets_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str,
             else:
                 resolved_params[k] = v
         elif isinstance(v, dict):
-            resolved_params[k] = _resolve_secrets_in_dict(v, resolver)
+            resolved_params[k] = read_secret_in_dict(v, resolver)
         elif isinstance(v, list):
             resolved_params[k] = [
-                _resolve_secrets_in_dict(item, resolver) if isinstance(item, dict) else item
+                read_secret_in_dict(item, resolver) if isinstance(item, dict) else item
                 for item in v
             ]
         else:
@@ -32,7 +30,6 @@ def _resolve_secrets_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str,
 
 def read_secret(param_value: str, resolver=None, **kwargs: Any) -> Optional[str]:
     if resolver is None:
-        # 遅延 import で circular import を回避
         from core.infrastructure.secret_resolver import secret_resolver as resolver
 
     if isinstance(param_value, str):

@@ -31,7 +31,7 @@ class StorageAdapter:
 
         try:
             if spark is not None:
-                # Spark DataFrame を返す場合
+                # Return as Spark DataFrame
                 if file_format == SupportedFormats.CSV:
                     return spark.read.options(**read_opts).csv(normalized_path)
                 elif file_format == SupportedFormats.PARQUET:
@@ -41,7 +41,7 @@ class StorageAdapter:
                 else:
                     raise ValueError(f"Spark read not supported for format '{file_format.value}'")
             else:
-                # pandas DataFrame
+                # Return as pandas DataFrame
                 if file_format == SupportedFormats.CSV:
                     return pd.read_csv(normalized_path, storage_options=options, **read_opts)
                 elif file_format == SupportedFormats.PARQUET:
@@ -67,7 +67,7 @@ class StorageAdapter:
 
         try:
             if spark is not None:
-                # Spark DataFrame として書き出す場合
+                # Write as Spark DataFrame
                 if file_format == SupportedFormats.CSV:
                     df.write.options(**write_opts).mode("overwrite").csv(normalized_path)
                 elif file_format == SupportedFormats.PARQUET:
@@ -77,7 +77,7 @@ class StorageAdapter:
                 else:
                     raise ValueError(f"Spark write not supported for format '{file_format.value}'")
             else:
-                # pandas DataFrame
+                # Write as pandas DataFrame
                 if not is_remote_path(path):
                     os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
 

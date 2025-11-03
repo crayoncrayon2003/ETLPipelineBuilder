@@ -5,6 +5,9 @@
 /backend/scripts/data/
 /backend/scripts/etl_framework_backend.egg-info/
 /backend/scripts/**/__pycache__/
-
+/backend/test/.coverage
+/backend/test/test_results.xml
+/backend/test/coverage_html/
+/backend/test/**/__pycache__/
 
 /frontend/node_modules/

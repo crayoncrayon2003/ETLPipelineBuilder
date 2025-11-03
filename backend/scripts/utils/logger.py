@@ -6,48 +6,30 @@ from typing import Optional
 def setup_logger(
     name: str = "etl_framework",
     level: str = "INFO",
-    # log_file: Optional[str] = None
     log_file: Optional[str] = "/tmp/etl_framework.log"
 ) -> logging.Logger:
     """
     Sets up and configures a standardized logger that outputs to both
     console and an optional log file.
-
-    Args:
-        name (str): Logger name. Use `__name__` to keep module-specific loggers.
-        level (str): Logging level (DEBUG, INFO, etc.).
-        log_file (str, optional): File path for log output. If None, file logging is skipped.
-
-    Returns:
-        logging.Logger: Configured logger instance.
     """
-    # Get the numeric logging level from the string
     log_level = getattr(logging, level.upper(), logging.INFO)
-
-    # Get the logger. getLogger(name) ensures that we get the same logger
-    # instance if called with the same name multiple times.
     logger = logging.getLogger(name)
     logger.setLevel(log_level)
-
-    if logger.hasHandlers():
-        return logger
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(log_level)
 
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    # --- Console Handler ---
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
-    # Optional file handler
-    if log_file:
+    # --- File Handler ---
+    if log_file and not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(log_level)
