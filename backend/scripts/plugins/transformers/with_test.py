@@ -11,11 +11,10 @@ logger = setup_logger(__name__, level=log_level)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 
-
 class SecretManagerReadThenWritePlugin(BasePlugin):
     """
-    Plugin to read a secret and then write its value to another secret.
-    Returns standardized finalize_container output.
+    Plugin to read a secret from AWS Secrets Manager and write its value
+    to another secret in AWS Secrets Manager. Ensures read/write consistency.
     """
 
     @hookimpl
@@ -27,16 +26,8 @@ class SecretManagerReadThenWritePlugin(BasePlugin):
         return {
             "type": "object",
             "properties": {
-                "source_secret": {
-                    "type": "string",
-                    "title": "Source Secret Reference",
-                    "description": "The secret to read from"
-                },
-                "target_secret": {
-                    "type": "string",
-                    "title": "Target Secret Reference",
-                    "description": "The secret to write to"
-                }
+                "source_secret": {"type": "string", "title": "Source Secret Reference"},
+                "target_secret": {"type": "string", "title": "Target Secret Reference"}
             },
             "required": ["source_secret", "target_secret"]
         }
@@ -57,7 +48,7 @@ class SecretManagerReadThenWritePlugin(BasePlugin):
             logger.error(f"[{self.get_plugin_name()}] Failed to read secret: {e}")
             raise
 
-        # Write secret
+        # Write secret to target
         logger.info(f"[{self.get_plugin_name()}] Writing secret '{target_secret}'...")
         try:
             write_secret(target_secret, read_val)
@@ -66,9 +57,7 @@ class SecretManagerReadThenWritePlugin(BasePlugin):
             logger.error(f"[{self.get_plugin_name()}] Failed to write secret: {e}")
             raise
 
-
         return self.finalize_container(
             container,
-            metadata={
-            }
+            metadata={}
         )

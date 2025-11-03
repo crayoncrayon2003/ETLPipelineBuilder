@@ -194,32 +194,36 @@ class AWSSecretResolver(BaseSecretResolver):
     def _write_to_secretsmanager(self, secret_reference: str, secret_value: str) -> None:
         sm_match = re.match(r"^aws_secretsmanager://([^@]+)(?:@(.+))?$", secret_reference)
         if not sm_match:
-            logger.error(f"Invalid Secrets Manager reference: {secret_reference}")
-            return
-        secret_name = sm_match.group(1)
-        json_key = sm_match.group(2)
+            raise SecretWriteError(f"Invalid Secrets Manager reference: {secret_reference}")
+
+        secret_name, json_key = sm_match.groups()
+
         try:
-            current_secret = None
             try:
                 resp = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
-                current_secret = resp.get("SecretString")
+                current_secret = resp.get("SecretString", "{}")
             except self.secretsmanager_client.exceptions.ResourceNotFoundException:
-                logger.info(f"Creating new secret '{secret_name}'...")
-                self.secretsmanager_client.create_secret(Name=secret_name, SecretString=secret_value)
+                payload = secret_value if not json_key else json.dumps({json_key: secret_value})
+                self.secretsmanager_client.create_secret(Name=secret_name, SecretString=payload)
+                logger.info(f"Secret '{secret_name}' created successfully.")
                 return
-            secret_payload = secret_value
+
             if json_key:
                 try:
-                    data = json.loads(current_secret or "{}")
+                    data = json.loads(current_secret)
                 except json.JSONDecodeError:
                     data = {}
                 data[json_key] = secret_value
-                secret_payload = json.dumps(data)
-            self.secretsmanager_client.put_secret_value(SecretId=secret_name, SecretString=secret_payload)
+                secret_value_to_put = json.dumps(data)
+            else:
+                secret_value_to_put = secret_value
+
+            self.secretsmanager_client.put_secret_value(SecretId=secret_name, SecretString=secret_value_to_put)
             logger.info(f"Secret '{secret_name}' updated successfully.")
+
         except Exception as e:
             logger.error(f"Failed to write secret '{secret_name}': {e}")
-            raise
+            raise SecretWriteError(f"Failed to write secret '{secret_name}': {e}")
 
     # ---------------------------------------------------------------------
     # AWS Parameter Store
@@ -239,9 +243,10 @@ class AWSSecretResolver(BaseSecretResolver):
     def _write_to_parameterstore(self, secret_reference: str, secret_value: str) -> None:
         ps_match = re.match(r"^aws_parameterstore://(.+)$", secret_reference)
         if not ps_match:
-            logger.error(f"Invalid Parameter Store reference: {secret_reference}")
-            return
+            raise SecretWriteError(f"Invalid Parameter Store reference: {secret_reference}")
+
         param_name = ps_match.group(1)
+
         try:
             self.ssm_client.put_parameter(
                 Name=param_name,
@@ -252,7 +257,7 @@ class AWSSecretResolver(BaseSecretResolver):
             logger.info(f"Parameter '{param_name}' updated successfully.")
         except Exception as e:
             logger.error(f"Failed to write parameter '{param_name}': {e}")
-            raise
+            raise SecretWriteError(f"Failed to write parameter '{param_name}': {e}")
 
     # ---------------------------------------------------------------------
     # AWS KMS Encrypt/Decrypt
@@ -271,20 +276,29 @@ class AWSSecretResolver(BaseSecretResolver):
             return None
 
     def _encrypt_with_kms(self, secret_reference: str, plaintext: str, encryption_context: Optional[Dict[str, str]] = None) -> str:
+        """
+        Encrypt plaintext using KMS key, supporting consistent read/write.
+        Raises SecretWriteError on failure.
+        """
         kms_match = re.match(r"^aws_kms_encrypt://(.+)$", secret_reference)
         if not kms_match:
-            raise ValueError(f"Invalid KMS encrypt reference: {secret_reference}")
+            raise SecretWriteError(f"Invalid KMS encrypt reference: {secret_reference}")
+
         kms_key_id = kms_match.group(1)
+
         try:
             response = self.kms_client.encrypt(
                 KeyId=kms_key_id,
                 Plaintext=plaintext.encode("utf-8"),
                 EncryptionContext=encryption_context or {}
             )
-            return base64.b64encode(response["CiphertextBlob"]).decode("utf-8")
+            ciphertext_b64 = base64.b64encode(response["CiphertextBlob"]).decode("utf-8")
+            logger.info(f"KMS encryption successful for key '{kms_key_id}'.")
+            return ciphertext_b64
         except Exception as e:
-            logger.error(f"Failed to encrypt value with KMS: {e}")
-            raise
+            logger.error(f"Failed to encrypt value with KMS key '{kms_key_id}': {e}")
+            raise SecretWriteError(f"Failed to encrypt value with KMS key '{kms_key_id}': {e}")
+
 
 # ==============================================================================
 # Factory
