@@ -11,7 +11,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__fi
 
 from typing import Dict, Any, Optional, List
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.pipeline.step_executor import StepExecutor
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
 
@@ -57,7 +57,7 @@ def _submit_node_task_batch(
     _node_results_cache[node_id] = result
     return result
 
-def run_pipeline_from_file(config_file_path: str):
+def run_pipeline_from_file(config_file_path: str, fail_stop: bool=True):
     """
     The main entry point for running a pipeline from a saved JSON file.
     Supports local and S3 paths.
@@ -76,8 +76,16 @@ def run_pipeline_from_file(config_file_path: str):
     logger.info(f"Starting batch pipeline run for: {pipeline_def.name}")
     _node_results_cache.clear()
     nodes_map = {node.id: node for node in pipeline_def.nodes}
-    for node_id in nodes_map:
-        _submit_node_task_batch(node_id, nodes_map, pipeline_def.edges, project_root)
+
+    try:
+        for node_id in nodes_map:
+            ret = _submit_node_task_batch(node_id, nodes_map, pipeline_def.edges, project_root)
+            if fail_stop :
+                if ret.status in [DataContainerStatus.ERROR,DataContainerStatus.SKIPPED,DataContainerStatus.VALIDATION_FAILED,]:
+                    raise RuntimeError(f"Node '{node_id}' execution failed.")
+    except Exception as e:
+        logger.error(f"Failed to load pipeline definition file: {e}", exc_info=True)
+        return
     logger.info(f"Pipeline '{pipeline_def.name}' completed.")
 
 
@@ -99,7 +107,7 @@ def main_local():
         config_file = os.path.join(os.getcwd(), config_file)
     config_file = os.path.abspath(config_file)
 
-    run_pipeline_from_file(config_file)
+    run_pipeline_from_file(config_file, fail_stop=False)
 
 
 def main_aws():
@@ -115,7 +123,7 @@ def main_aws():
     if unknown:
         logger.warning(f"[AWS CLI Args] Unknown arguments: {unknown}")
 
-    run_pipeline_from_file(args.config_file)
+    run_pipeline_from_file(args.config_file, fail_stop=False)
 
 
 def main():
