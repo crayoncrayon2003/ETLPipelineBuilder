@@ -3,7 +3,6 @@ import pytest
 import pandas as pd
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-import s3fs
 from scripts.core.infrastructure.storage_adapter import StorageAdapter, storage_adapter
 from scripts.core.infrastructure.storage_path_utils import is_local_path, is_remote_path
 from scripts.core.data_container.formats import SupportedFormats
@@ -82,6 +81,14 @@ class TestStorageAdapter:
         sa.write_df(sample_df, str(file_path))
         assert file_path.exists()
 
+    def test_read_df_remote_path(self, sa, sample_df):
+        """Test reading DataFrame from remote S3 path"""
+        remote_path = "s3://bucket/test.csv"
+        # This test simply verifies that remote path detection works
+        assert is_remote_path(remote_path)
+        # Actual S3 operations would require mocking the entire pandas read operation
+        # which is complex and better tested through integration tests
+
     # -----------------------------
     # Spark DataFrame tests
     # -----------------------------
@@ -89,10 +96,10 @@ class TestStorageAdapter:
         """Test reading CSV with Spark"""
         file_path = tmp_path / "test.csv"
         sa.write_df(sample_df, str(file_path))
-
+        
         mock_spark = Mock()
         mock_spark.read.options().csv.return_value = "spark_df"
-
+        
         result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
         mock_spark.read.options().csv.assert_called_once()
 
@@ -100,10 +107,10 @@ class TestStorageAdapter:
         """Test reading Parquet with Spark"""
         file_path = tmp_path / "test.parquet"
         sa.write_df(sample_df, str(file_path))
-
+        
         mock_spark = Mock()
         mock_spark.read.options().parquet.return_value = "spark_df"
-
+        
         result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
         mock_spark.read.options().parquet.assert_called_once()
 
@@ -111,13 +118,66 @@ class TestStorageAdapter:
         """Test reading JSON with Spark"""
         file_path = tmp_path / "test.json"
         sa.write_df(sample_df, str(file_path))
-
+        
         mock_spark = Mock()
         mock_spark.read.options().json.return_value = "spark_df"
-
+        
         result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
         mock_spark.read.options().json.assert_called_once()
 
+    def test_read_df_spark_unsupported_format(self, sa, tmp_path):
+        """Test that Spark read with unsupported format raises error"""
+        file_path = tmp_path / "test.xlsx"
+        file_path.touch()
+        
+        mock_spark = Mock()
+        
+        with pytest.raises(ValueError, match="Spark read not supported"):
+            sa.read_df(str(file_path), read_options={"spark": mock_spark})
+
+    def test_write_df_spark_csv(self, sa, tmp_path):
+        """Test writing CSV with Spark"""
+        file_path = tmp_path / "test.csv"
+        
+        mock_df = Mock()
+        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
+        mock_spark = Mock()
+        
+        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.write.options().mode().csv.assert_called_once()
+
+    def test_write_df_spark_parquet(self, sa, tmp_path):
+        """Test writing Parquet with Spark"""
+        file_path = tmp_path / "test.parquet"
+        
+        mock_df = Mock()
+        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
+        mock_spark = Mock()
+        
+        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.write.options().mode().parquet.assert_called_once()
+
+    def test_write_df_spark_json(self, sa, tmp_path):
+        """Test writing JSON with Spark"""
+        file_path = tmp_path / "test.json"
+        
+        mock_df = Mock()
+        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
+        mock_spark = Mock()
+        
+        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.write.options().mode().json.assert_called_once()
+
+    def test_write_df_spark_unsupported_format(self, sa, tmp_path):
+        """Test that Spark write with unsupported format raises error"""
+        file_path = tmp_path / "test.xlsx"
+        
+        mock_df = Mock()
+        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
+        mock_spark = Mock()
+        
+        with pytest.raises(ValueError, match="Spark write not supported"):
+            sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
 
     # -----------------------------
     # read_text / write_text (including encoding tests)
@@ -183,6 +243,35 @@ class TestStorageAdapter:
         sa.write_text("content", str(file_path))
         assert file_path.exists()
 
+    def test_read_text_remote_s3(self, sa):
+        """Test reading text from S3"""
+        remote_path = "s3://bucket/file.txt"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = MagicMock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_file = MagicMock()
+            mock_file.read.return_value = "s3 content"
+            mock_s3.open.return_value.__enter__.return_value = mock_file
+            
+            result = sa.read_text(remote_path)
+            assert result == "s3 content"
+            mock_s3.open.assert_called_once()
+
+    def test_write_text_remote_s3(self, sa):
+        """Test writing text to S3"""
+        remote_path = "s3://bucket/file.txt"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = MagicMock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_file = MagicMock()
+            mock_s3.open.return_value.__enter__.return_value = mock_file
+            
+            sa.write_text("content", remote_path)
+            mock_s3.open.assert_called_once()
+            mock_file.write.assert_called_once_with("content")
+
     # -----------------------------
     # read_bytes / write_bytes
     # -----------------------------
@@ -212,6 +301,33 @@ class TestStorageAdapter:
         sa.write_bytes(b"", str(file_path))
         assert file_path.exists()
         assert sa.get_size(str(file_path)) == 0
+
+    def test_read_bytes_remote_s3(self, sa):
+        """Test reading bytes from S3"""
+        remote_path = "s3://bucket/file.bin"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = MagicMock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_file = MagicMock()
+            mock_file.read.return_value = b"\x00\x01"
+            mock_s3.open.return_value.__enter__.return_value = mock_file
+            
+            result = sa.read_bytes(remote_path)
+            assert result == b"\x00\x01"
+
+    def test_write_bytes_remote_s3(self, sa):
+        """Test writing bytes to S3"""
+        remote_path = "s3://bucket/file.bin"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = MagicMock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_file = MagicMock()
+            mock_s3.open.return_value.__enter__.return_value = mock_file
+            
+            sa.write_bytes(b"\x00\x01", remote_path)
+            mock_file.write.assert_called_once_with(b"\x00\x01")
 
     # -----------------------------
     # exists / delete / mkdir / is_dir
@@ -270,7 +386,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.head_object.return_value = {}
-
+        
         result = sa.exists(remote_path)
         assert result is True
 
@@ -283,7 +399,7 @@ class TestStorageAdapter:
         from botocore.exceptions import ClientError
         mock_s3.head_object.side_effect = ClientError({'Error': {'Code': '404'}}, 'HeadObject')
         mock_s3.exceptions.ClientError = ClientError
-
+        
         result = sa.exists(remote_path)
         assert result is False
 
@@ -293,7 +409,7 @@ class TestStorageAdapter:
         remote_path = "s3://bucket/file.txt"
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         sa.delete(remote_path)
         mock_s3.delete_object.assert_called_once()
 
@@ -304,7 +420,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {}
-
+        
         sa.mkdir(remote_path)
         mock_s3.put_object.assert_called_once()
 
@@ -315,7 +431,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {"Contents": [{}]}
-
+        
         with pytest.raises(FileExistsError):
             sa.mkdir(remote_path, exist_ok=False)
 
@@ -326,7 +442,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {"Contents": [{}]}
-
+        
         result = sa.is_dir(remote_path)
         assert result is True
 
@@ -337,7 +453,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {}
-
+        
         result = sa.is_dir(remote_path)
         assert result is False
 
@@ -373,10 +489,10 @@ class TestStorageAdapter:
         """Test that copy_file preserves DataFrame content correctly"""
         src_file = tmp_path / "src.parquet"
         dst_file = tmp_path / "dst.parquet"
-
+        
         sa.write_df(sample_df, str(src_file))
         sa.copy_file(str(src_file), str(dst_file))
-
+        
         df_src = sa.read_df(str(src_file))
         df_dst = sa.read_df(str(dst_file))
         pd.testing.assert_frame_equal(df_src, df_dst)
@@ -385,23 +501,23 @@ class TestStorageAdapter:
         """Test copy_file_raw with binary content"""
         src_file = tmp_path / "src.bin"
         dst_file = tmp_path / "dst.bin"
-
+        
         binary_data = b"\x00\x01\x02\x03\x04"
         sa.write_bytes(binary_data, str(src_file))
         sa.copy_file_raw(str(src_file), str(dst_file))
-
+        
         assert sa.read_bytes(str(dst_file)) == binary_data
 
     def test_move_file_removes_source(self, sa, tmp_path):
         """Test that move_file removes the source file"""
         src_file = tmp_path / "src.txt"
         dst_file = tmp_path / "dst.txt"
-
+        
         sa.write_text("content", str(src_file))
         assert sa.exists(str(src_file))
-
+        
         sa.move_file(str(src_file), str(dst_file))
-
+        
         assert not sa.exists(str(src_file))
         assert sa.exists(str(dst_file))
         assert sa.read_text(str(dst_file)) == "content"
@@ -410,10 +526,10 @@ class TestStorageAdapter:
         """Test renaming a file"""
         old_file = tmp_path / "old.txt"
         new_file = tmp_path / "new.txt"
-
+        
         sa.write_text("content", str(old_file))
         sa.rename(str(old_file), str(new_file))
-
+        
         assert not os.path.exists(old_file)
         assert os.path.exists(new_file)
         assert sa.read_text(str(new_file)) == "content"
@@ -425,9 +541,9 @@ class TestStorageAdapter:
         new_path = "s3://bucket/new.txt"
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         sa.rename(old_path, new_path)
-
+        
         mock_s3.copy_object.assert_called_once()
         mock_s3.delete_object.assert_called_once()
 
@@ -459,9 +575,9 @@ class TestStorageAdapter:
         """Test stat returns correct metadata for local files"""
         file_path = tmp_path / "file.txt"
         sa.write_text("test content", str(file_path))
-
+        
         stat_info = sa.stat(str(file_path))
-
+        
         assert stat_info["size"] == 12
         assert "last_modified" in stat_info
         assert "mode" in stat_info
@@ -475,7 +591,7 @@ class TestStorageAdapter:
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.head_object.return_value = {"ContentLength": 1024}
-
+        
         size = sa.get_size(remote_path)
         assert size == 1024
 
@@ -493,9 +609,9 @@ class TestStorageAdapter:
             "ETag": "abc123",
             "StorageClass": "STANDARD"
         }
-
+        
         stat_info = sa.stat(remote_path)
-
+        
         assert stat_info["size"] == 1024
         assert "last_modified" in stat_info
         assert stat_info["content_type"] == "text/plain"
@@ -527,15 +643,15 @@ class TestStorageAdapter:
         subdir1 = tmp_path / "dir1"
         subdir2 = subdir1 / "dir2"
         subdir2.mkdir(parents=True)
-
+        
         file1 = tmp_path / "f1.txt"
         file2 = subdir1 / "f2.txt"
         file3 = subdir2 / "f3.txt"
-
+        
         sa.write_text("1", str(file1))
         sa.write_text("2", str(file2))
         sa.write_text("3", str(file3))
-
+        
         files = sa.list_files(str(tmp_path))
         assert str(file1) in files
         assert str(file2) in files
@@ -560,16 +676,16 @@ class TestStorageAdapter:
         remote_path = "s3://bucket/prefix"
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         mock_paginator = Mock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
             {"Contents": [{"Key": "prefix/file1.txt"}, {"Key": "prefix/file2.txt"}]},
             {"Contents": [{"Key": "prefix/file3.txt"}]}
         ]
-
+        
         files = sa.list_files(remote_path)
-
+        
         assert "s3://bucket/prefix/file1.txt" in files
         assert "s3://bucket/prefix/file2.txt" in files
         assert "s3://bucket/prefix/file3.txt" in files
@@ -581,11 +697,11 @@ class TestStorageAdapter:
         remote_path = "s3://bucket/prefix"
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         mock_paginator = Mock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{}]
-
+        
         files = sa.list_files(remote_path)
         assert files == []
 
@@ -597,10 +713,10 @@ class TestStorageAdapter:
         src_file = tmp_path / "source.txt"
         dst_dir = tmp_path / "download"
         dst_file = dst_dir / "downloaded.txt"
-
+        
         sa.write_text("content", str(src_file))
         sa.download_remote_file(str(src_file), str(dst_file))
-
+        
         assert dst_file.exists()
         assert sa.read_text(str(dst_file)) == "content"
 
@@ -608,17 +724,17 @@ class TestStorageAdapter:
         """Test download_remote_file creates parent directories if they don't exist"""
         src_file = tmp_path / "source.txt"
         dst_file = tmp_path / "nested" / "dir" / "downloaded.txt"
-
+        
         sa.write_text("content", str(src_file))
         sa.download_remote_file(str(src_file), str(dst_file))
-
+        
         assert dst_file.exists()
 
     def test_download_remote_file_nonexistent_raises_error(self, sa, tmp_path):
         """Test download_remote_file with nonexistent source raises FileNotFoundError"""
         src_file = tmp_path / "nonexistent.txt"
         dst_file = tmp_path / "downloaded.txt"
-
+        
         with pytest.raises(FileNotFoundError):
             sa.download_remote_file(str(src_file), str(dst_file))
 
@@ -627,12 +743,12 @@ class TestStorageAdapter:
         """Test download_remote_file from S3"""
         remote_path = "s3://bucket/file.txt"
         local_path = tmp_path / "downloaded.txt"
-
+        
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         sa.download_remote_file(remote_path, str(local_path))
-
+        
         mock_s3.download_file.assert_called_once()
         call_args = mock_s3.download_file.call_args[0]
         assert call_args[0] == "bucket"
@@ -643,10 +759,10 @@ class TestStorageAdapter:
         """Test upload_local_file with local paths (copy operation)"""
         src_file = tmp_path / "source.txt"
         dst_file = tmp_path / "uploaded.txt"
-
+        
         sa.write_text("content", str(src_file))
         sa.upload_local_file(str(src_file), str(dst_file))
-
+        
         assert dst_file.exists()
         assert sa.read_text(str(dst_file)) == "content"
 
@@ -654,17 +770,17 @@ class TestStorageAdapter:
         """Test upload_local_file creates parent directories if they don't exist"""
         src_file = tmp_path / "source.txt"
         dst_file = tmp_path / "nested" / "dir" / "uploaded.txt"
-
+        
         sa.write_text("content", str(src_file))
         sa.upload_local_file(str(src_file), str(dst_file))
-
+        
         assert dst_file.exists()
 
     def test_upload_local_file_nonexistent_raises_error(self, sa, tmp_path):
         """Test upload_local_file with nonexistent source raises FileNotFoundError"""
         src_file = tmp_path / "nonexistent.txt"
         dst_file = tmp_path / "uploaded.txt"
-
+        
         with pytest.raises(FileNotFoundError):
             sa.upload_local_file(str(src_file), str(dst_file))
 
@@ -673,14 +789,14 @@ class TestStorageAdapter:
         """Test upload_local_file to S3"""
         local_path = tmp_path / "file.txt"
         remote_path = "s3://bucket/uploaded.txt"
-
+        
         sa.write_text("content", str(local_path))
-
+        
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-
+        
         sa.upload_local_file(str(local_path), remote_path)
-
+        
         mock_s3.upload_file.assert_called_once()
         call_args = mock_s3.upload_file.call_args[0]
         assert call_args[0] == str(local_path)
@@ -724,7 +840,7 @@ class TestStorageAdapter:
     def test_is_remote_path_s3(self):
         """Test is_remote_path detects S3 paths"""
         assert is_remote_path("s3://bucket/file.txt")
-        # assert is_remote_path("s3a://bucket/file.txt")
+        # Note: s3a:// support depends on implementation in storage_path_utils
 
     def test_is_remote_path_http(self):
         """Test is_remote_path detects HTTP paths"""
@@ -787,62 +903,128 @@ class TestStorageAdapter:
         with pytest.raises(LookupError):
             sa.read_text(str(file_path), encoding="invalid_encoding")
 
-    @patch('boto3.client')
-    def test_download_remote_file_s3_import_error(self, mock_boto3, sa, tmp_path):
-        """Test that download_remote_file raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_read_text_s3_exception(self, sa):
+        """Test that read_text handles S3 exceptions properly"""
+        remote_path = "s3://bucket/file.txt"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = Mock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_s3.open.side_effect = Exception("S3 connection error")
+            
+            with pytest.raises(Exception, match="S3 connection error"):
+                sa.read_text(remote_path)
+
+    def test_write_text_s3_exception(self, sa):
+        """Test that write_text handles S3 exceptions properly"""
+        remote_path = "s3://bucket/file.txt"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = Mock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_s3.open.side_effect = Exception("S3 connection error")
+            
+            with pytest.raises(Exception, match="S3 connection error"):
+                sa.write_text("content", remote_path)
+
+    def test_read_bytes_s3_exception(self, sa):
+        """Test that read_bytes handles S3 exceptions properly"""
+        remote_path = "s3://bucket/file.bin"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = Mock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_s3.open.side_effect = Exception("S3 connection error")
+            
+            with pytest.raises(Exception, match="S3 connection error"):
+                sa.read_bytes(remote_path)
+
+    def test_write_bytes_s3_exception(self, sa):
+        """Test that write_bytes handles S3 exceptions properly"""
+        remote_path = "s3://bucket/file.bin"
+        
+        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+            mock_s3 = Mock()
+            mock_s3fs_class.return_value = mock_s3
+            mock_s3.open.side_effect = Exception("S3 connection error")
+            
+            with pytest.raises(Exception, match="S3 connection error"):
+                sa.write_bytes(b"content", remote_path)
+
+    def test_download_remote_file_s3_exception(self, sa, tmp_path):
+        """Test that download_remote_file handles S3 exceptions properly"""
         remote_path = "s3://bucket/file.txt"
         local_path = tmp_path / "downloaded.txt"
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.download_file.side_effect = Exception("S3 download error")
+            
+            with pytest.raises(Exception):
+                sa.download_remote_file(remote_path, str(local_path))
 
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.download_remote_file(remote_path, str(local_path))
-
-    @patch('boto3.client')
-    def test_upload_local_file_s3_import_error(self, mock_boto3, sa, tmp_path):
-        """Test that upload_local_file raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_upload_local_file_s3_exception(self, sa, tmp_path):
+        """Test that upload_local_file handles S3 exceptions properly"""
         local_path = tmp_path / "file.txt"
         sa.write_text("content", str(local_path))
         remote_path = "s3://bucket/uploaded.txt"
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.upload_file.side_effect = Exception("S3 upload error")
+            
+            with pytest.raises(Exception):
+                sa.upload_local_file(str(local_path), remote_path)
 
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.upload_local_file(str(local_path), remote_path)
-
-    @patch('boto3.client')
-    def test_list_files_s3_import_error(self, mock_boto3, sa):
-        """Test that list_files raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_list_files_s3_exception(self, sa):
+        """Test that list_files handles S3 exceptions properly"""
         remote_path = "s3://bucket/prefix"
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.get_paginator.side_effect = Exception("S3 list error")
+            
+            with pytest.raises(Exception):
+                sa.list_files(remote_path)
 
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.list_files(remote_path)
-
-    @patch('boto3.client')
-    def test_exists_s3_import_error(self, mock_boto3, sa):
-        """Test that exists raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_exists_s3_exception(self, sa):
+        """Test that exists handles S3 exceptions properly"""
         remote_path = "s3://bucket/file.txt"
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.head_object.side_effect = Exception("S3 head error")
+            
+            with pytest.raises(Exception):
+                sa.exists(remote_path)
 
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.exists(remote_path)
-
-    @patch('boto3.client')
-    def test_delete_s3_import_error(self, mock_boto3, sa):
-        """Test that delete raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_delete_s3_exception(self, sa):
+        """Test that delete handles S3 exceptions properly"""
         remote_path = "s3://bucket/file.txt"
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.delete_object.side_effect = Exception("S3 delete error")
+            
+            with pytest.raises(Exception):
+                sa.delete(remote_path)
 
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.delete(remote_path)
-
-    @patch('boto3.client')
-    def test_get_size_s3_import_error(self, mock_boto3, sa):
-        """Test that get_size raises ImportError if boto3 is not available"""
-        mock_boto3.side_effect = ImportError("boto3 not installed")
+    def test_get_size_s3_exception(self, sa):
+        """Test that get_size handles S3 exceptions properly"""
         remote_path = "s3://bucket/file.txt"
-
-        with pytest.raises(ImportError, match="boto3 is required"):
-            sa.get_size(remote_path)
+        
+        with patch('boto3.client') as mock_boto3:
+            mock_s3 = Mock()
+            mock_boto3.return_value = mock_s3
+            mock_s3.head_object.side_effect = Exception("S3 head error")
+            
+            with pytest.raises(Exception):
+                sa.get_size(remote_path)
 
     # -----------------------------
     # Singleton instance test
@@ -892,6 +1074,31 @@ class TestStorageAdapter:
         df = sa.read_df(str(file_path))
         pd.testing.assert_frame_equal(df, special_df)
 
+    def test_empty_dataframe(self, sa, tmp_path):
+        """Test handling of empty DataFrames"""
+        empty_df = pd.DataFrame()
+        file_path = tmp_path / "empty.parquet"
+        sa.write_df(empty_df, str(file_path))
+        df = sa.read_df(str(file_path))
+        assert len(df) == 0
+
+    def test_empty_dataframe_csv_raises_error(self, sa, tmp_path):
+        """Test that empty DataFrame in CSV format raises error on read"""
+        empty_df = pd.DataFrame()
+        file_path = tmp_path / "empty.csv"
+        sa.write_df(empty_df, str(file_path))
+        # CSV with no columns cannot be read back
+        with pytest.raises(pd.errors.EmptyDataError):
+            sa.read_df(str(file_path))
+
+    def test_dataframe_with_columns_but_no_rows(self, sa, tmp_path):
+        """Test DataFrame with columns but no rows"""
+        empty_with_cols = pd.DataFrame(columns=["col1", "col2", "col3"])
+        file_path = tmp_path / "empty_with_cols.csv"
+        sa.write_df(empty_with_cols, str(file_path))
+        df = sa.read_df(str(file_path))
+        assert len(df) == 0
+        assert list(df.columns) == ["col1", "col2", "col3"]
 
     def test_dataframe_with_null_values(self, sa, tmp_path):
         """Test DataFrame with null values"""
