@@ -95,19 +95,19 @@ class StorageAdapter:
             logger.error(f"Failed to write file to '{path}': {e}")
             raise
 
-    def read_text(self, path: str) -> str:
+    def read_text(self, path: str, encoding: str='utf-8') -> str:
         logger.info(f"Reading text from: {path}")
         try:
             normalized_path = normalize_path(path, os.getcwd())
 
             if is_remote_path(path):
                 s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'r', encoding='utf-8') as f:
+                with s3.open(normalized_path, 'r', encoding=encoding) as f:
                     return f.read()
             else:
                 if not os.path.isfile(normalized_path):
                     raise FileNotFoundError(f"Local file not found: {normalized_path}")
-                with open(normalized_path, 'r', encoding='utf-8') as f:
+                with open(normalized_path, 'r', encoding=encoding) as f:
                     return f.read()
         except ImportError:
             raise ImportError("s3fs is required for reading from S3.")
@@ -115,20 +115,20 @@ class StorageAdapter:
             logger.error(f"Failed to read text from '{path}': {e}")
             raise
 
-    def write_text(self, text_content: str, path: str):
+    def write_text(self, text_content: str, path: str, encoding: str='utf-8'):
         logger.info(f"Writing text content to: {path}")
         normalized_path = normalize_path(path, os.getcwd())
 
         if is_remote_path(path):
             try:
                 s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'w', encoding='utf-8') as f:
+                with s3.open(normalized_path, 'w', encoding=encoding) as f:
                     f.write(text_content)
             except ImportError:
                 raise ImportError("s3fs is required for writing text to S3.")
         else:
             os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
-            with open(normalized_path, 'w', encoding='utf-8') as f:
+            with open(normalized_path, 'w', encoding=encoding) as f:
                 f.write(text_content)
 
     def read_bytes(self, path: str) -> bytes:
