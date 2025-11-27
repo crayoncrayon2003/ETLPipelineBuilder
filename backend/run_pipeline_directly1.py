@@ -6,14 +6,14 @@ scripts_path = os.path.join(script_dir, "scripts")
 if scripts_path not in sys.path:
     sys.path.append(scripts_path)
 
+from utils.logger import AppLogger, setup_logger
+
+applogger = AppLogger(inputdataname="MainModule")
+applogger.init_logger("INFO")
+logger = setup_logger(__name__)
+
 from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
-
-from utils.logger import setup_logger
-
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
-
 
 def ensure_dir_exists(path):
     if not os.path.exists(path):

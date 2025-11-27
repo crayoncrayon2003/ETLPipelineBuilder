@@ -6,8 +6,7 @@ from core.data_container.container import DataContainer
 
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 class StepExecutor:
     """

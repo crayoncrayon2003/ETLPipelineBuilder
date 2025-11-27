@@ -4,7 +4,7 @@ cd backend
 python3.9 -m venv env
 source env/bin/activate
 (env) pip install --upgrade pip setuptools wheel
-(env) python install_requirements.py
+(env) python install_requirements-test.py
 (env) pip install -e .
 ```
 

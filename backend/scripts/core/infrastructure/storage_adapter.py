@@ -5,11 +5,11 @@ from typing import Dict, Any, Optional, Union
 import s3fs
 from datetime import datetime
 from core.data_container.formats import SupportedFormats
-from utils.logger import setup_logger
 from .storage_path_utils import normalize_path, is_remote_path, is_local_path
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class StorageAdapter:
 

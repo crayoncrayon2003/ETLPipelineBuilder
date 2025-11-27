@@ -12,8 +12,7 @@ from core.infrastructure.env_detector import is_running_on_aws
 
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 # ==============================================================================
 # Common Exception Class

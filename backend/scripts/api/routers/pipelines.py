@@ -8,8 +8,7 @@ from api.services.pipeline_service import run_pipeline_from_definition
 
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 # The project root is determined here to resolve paths for saving definition files.
 # It assumes this file is at backend/scripts/api/routers/pipelines.py

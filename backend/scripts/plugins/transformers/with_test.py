@@ -4,10 +4,10 @@ from typing import Dict, Any
 from core.data_container.container import DataContainer
 from core.plugin_manager.base_plugin import BasePlugin
 from core.infrastructure.secret import read_secret, write_secret
+
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 hookimpl = pluggy.HookimplMarker("etl_framework")
 

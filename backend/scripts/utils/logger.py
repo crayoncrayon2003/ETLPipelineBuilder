@@ -1,62 +1,90 @@
 import logging
 import sys
-import os
 from typing import Optional
 
-def setup_logger(
-    name: str = "etl_framework",
-    level: str = "INFO",
-    log_file: Optional[str] = "/tmp/etl_framework.log"
-) -> logging.Logger:
+LOG_FORMAT = '[%(inputdataname)s][%(levelname)s][%(filename)s][%(funcName)s:%(lineno)d]\t%(message)s'
+LOG_NAME2LEVEL = {
+    "TRACE": logging.DEBUG,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "FATAL": logging.FATAL,
+}
+
+
+class CustomFormatter(logging.Formatter):
+    def __init__(self, fmt: str, inputdataname: str = ""):
+        super().__init__(fmt)
+        self.inputdataname = inputdataname
+
+    def format(self, record):
+        record.inputdataname = self.inputdataname
+        return super().format(record)
+
+class AppLogger:
+    def __init__(self, inputdataname: str = ""):
+        self.inputdataname = inputdataname
+
+    def get_logger(self, name: str):
+        return logging.getLogger(name)
+
+    def init_logger(self, level_str: str = "INFO") -> logging.Logger:
+        root_logger = logging.getLogger()
+
+        # デフォルトの handler を全部消す
+        # ex. glueは、自動的にhandlerを追加する。この結果、意図しないログ出力や、ログ出力されないことがある
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+
+        # ハンドラ未設定なら初期化（root_logger の状態がグローバルの代替）
+        if not root_logger.handlers:
+            handler = logging.StreamHandler(stream=sys.stdout)
+            formatter = CustomFormatter(LOG_FORMAT, self.inputdataname)
+            handler.setFormatter(formatter)
+            root_logger.addHandler(handler)
+
+        # ログレベル設定
+        level = LOG_NAME2LEVEL.get(level_str.upper(), logging.INFO)
+        root_logger.setLevel(level)
+
+        # ハンドラの formatter を最新 inputdataname に更新
+        for handler in root_logger.handlers:
+            if isinstance(handler.formatter, CustomFormatter):
+                handler.setFormatter(CustomFormatter(LOG_FORMAT, self.inputdataname))
+            handler.setLevel(level)
+
+        # 伝播設定（子ロガー → root）
+        root_logger.propagate = True
+
+        root_logger.info(f"LOG_LEVEL set to {logging.getLevelName(level)}")
+        if self.inputdataname:
+            root_logger.info(f"INPUT_DATA_NAME: {self.inputdataname}")
+
+        return root_logger
+
+
+def setup_logger(name: str) -> logging.Logger:
     """
-    Sets up and configures a standardized logger that outputs to both
-    console and an optional log file.
+    Each module calls:
+        logger = setup_logger(__name__)
+    No global variables required.
+    The logger will propagate to the configured root logger.
     """
-    log_level = getattr(logging, level.upper(), logging.INFO)
     logger = logging.getLogger(name)
-    logger.setLevel(log_level)
+    logger.propagate = True
+    logger.setLevel(logging.NOTSET)  # inherit from root
 
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # --- Console Handler ---
-    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(log_level)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-
-    # --- File Handler ---
-    if log_file and not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+    # root が未初期化の可能性があるので、安全のため最低限の初期化を行う
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        # default init (INFO, no inputdataname)
+        handler = logging.StreamHandler(stream=sys.stdout)
+        formatter = CustomFormatter(LOG_FORMAT, inputdataname="")
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.INFO)
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+        root_logger.propagate = True
 
     return logger
-
-# --- Example Usage ---
-#
-# A plugin or script would use this logger like so:
-#
-# from .logger import setup_logger
-#
-# # Get a logger specific to the current module
-# log = setup_logger(__name__)
-#
-# def some_function():
-#     log.debug("This is a detailed debug message.")
-#     log.info("Starting an operation.")
-#     log.warning("Something might be wrong here.")
-#     try:
-#         result = 1 / 0
-#     except ZeroDivisionError:
-#         log.error("An error occurred!", exc_info=True)
-#
-# if __name__ == '__main__':
-#     # To see the debug message, you'd set the level:
-#     # setup_logger(__name__, level="DEBUG")
-#     some_function()

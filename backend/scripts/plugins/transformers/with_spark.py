@@ -9,8 +9,7 @@ from core.infrastructure.spark_session_factory import SparkSessionFactory
 from core.plugin_manager.base_plugin import BasePlugin
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame as SparkDataFrame

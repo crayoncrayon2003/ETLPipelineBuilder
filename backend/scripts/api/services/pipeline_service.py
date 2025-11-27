@@ -11,8 +11,7 @@ from core.pipeline.step_executor import StepExecutor
 
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 _node_results_cache: Dict[str, Any] = {}
 

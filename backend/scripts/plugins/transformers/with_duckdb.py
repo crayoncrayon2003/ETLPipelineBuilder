@@ -7,15 +7,15 @@ import pluggy
 from core.data_container.container import DataContainer
 from core.infrastructure.storage_adapter import storage_adapter
 from core.plugin_manager.base_plugin import BasePlugin
+
 from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+hookimpl = pluggy.HookimplMarker("etl_framework")
 
 os.environ["HOME"] = "/tmp"
 os.environ["DUCKDB_TMPDIR"] = "/tmp/duckdb_cache"
-
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
-
-hookimpl = pluggy.HookimplMarker("etl_framework")
 
 class DuckDBTransformer(BasePlugin):
     """

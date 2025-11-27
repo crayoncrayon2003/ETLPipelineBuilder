@@ -7,8 +7,7 @@ from api.schemas.plugin import PluginInfo
 
 from utils.logger import setup_logger
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+logger = setup_logger(__name__)
 
 router = APIRouter(
     prefix="/plugins",

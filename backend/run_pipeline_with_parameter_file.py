@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import json
+from typing import Dict, Any, Optional, List
 
 scripts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
 if scripts_path not in sys.path:
@@ -9,18 +10,19 @@ if scripts_path not in sys.path:
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-from typing import Dict, Any, Optional, List
+from utils.logger import AppLogger, setup_logger
+
+applogger = AppLogger(inputdataname="MainModule")
+applogger.init_logger("INFO")
+logger = setup_logger(__name__)
 
 from core.data_container.container import DataContainer, DataContainerStatus
 from core.pipeline.step_executor import StepExecutor
-from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
-
-from utils.logger import setup_logger
 from core.infrastructure.storage_adapter import storage_adapter
 from core.infrastructure.storage_path_utils import normalize_path, is_remote_path, is_local_path
 
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logger = setup_logger(__name__, level=log_level)
+from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
+
 
 _node_results_cache: Dict[str, Any] = {}
 

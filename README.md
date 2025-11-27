@@ -16,7 +16,7 @@ Plugins implement the following:
 
 The Backend App provides a framework for calling plugin groups.
 The backend application runs independently as an ETL pipeline.
-Refer to "./backend/run_pipeline_directly.py".
+Refer to "./backend/run_pipeline_directly1.py".
 
 This sample hard-codes the plugin call.　Coding is tedious.
 The FrontEnd App supports backend pipeline coding with a GUI.
@@ -44,6 +44,8 @@ source env/bin/activate
 ```
 (env) python run_pipeline_directly1.py
 (env) python run_pipeline_directly2.py
+(env) python run_pipeline_directly3.py
+(env) python run_pipeline_directly4.py
 ```
 
 # 3. BuckEnd App with FrontEnd App
