@@ -17,7 +17,7 @@ def parse_requirements(filename):
 
 setup(
     name="etl_framework_backend",
-    version="1.1.3",
+    version="1.1.4",
     package_dir={"": "scripts"},
     packages=find_packages(where="scripts"),
     install_requires=parse_requirements("requirements.txt"),
