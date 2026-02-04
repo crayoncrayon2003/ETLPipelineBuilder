@@ -25,6 +25,7 @@ class CustomFormatter(logging.Formatter):
 class AppLogger:
     def __init__(self, inputdataname: str = ""):
         self.inputdataname = inputdataname
+        self._handler_name = "etl_framework_backend_handler"
 
     def get_logger(self, name: str):
         return logging.getLogger(name)
@@ -32,36 +33,33 @@ class AppLogger:
     def init_logger(self, level_str: str = "INFO") -> logging.Logger:
         root_logger = logging.getLogger()
 
-        # デフォルトの handler を全部消す
-        # ex. glueは、自動的にhandlerを追加する。この結果、意図しないログ出力や、ログ出力されないことがある
-        for h in root_logger.handlers[:]:
-            root_logger.removeHandler(h)
-
-        # ハンドラ未設定なら初期化（root_logger の状態がグローバルの代替）
-        if not root_logger.handlers:
-            handler = logging.StreamHandler(stream=sys.stdout)
-            formatter = CustomFormatter(LOG_FORMAT, self.inputdataname)
-            handler.setFormatter(formatter)
-            root_logger.addHandler(handler)
-
-        # ログレベル設定
         level = LOG_NAME2LEVEL.get(level_str.upper(), logging.INFO)
         root_logger.setLevel(level)
 
-        # ハンドラの formatter を最新 inputdataname に更新
-        for handler in root_logger.handlers:
-            if isinstance(handler.formatter, CustomFormatter):
-                handler.setFormatter(CustomFormatter(LOG_FORMAT, self.inputdataname))
-            handler.setLevel(level)
+        # 既存 handler を尊重しつつ、自分の handler がなければ追加
+        app_handler = None
+        for h in root_logger.handlers:
+            if getattr(h, "name", None) == self._handler_name:
+                app_handler = h
+                break
 
-        # 伝播設定（子ロガー → root）
-        root_logger.propagate = True
+        if app_handler is None:
+            app_handler = logging.StreamHandler(stream=sys.stdout)
+            app_handler.name = self._handler_name
+            root_logger.addHandler(app_handler)
+
+        # formatter は自分の handler のみ更新
+        formatter = CustomFormatter(LOG_FORMAT, self.inputdataname)
+        app_handler.setFormatter(formatter)
+        app_handler.setLevel(level)
 
         root_logger.info(f"LOG_LEVEL set to {logging.getLevelName(level)}")
         if self.inputdataname:
             root_logger.info(f"INPUT_DATA_NAME: {self.inputdataname}")
 
+        root_logger.propagate = True
         return root_logger
+
 
 
 def setup_logger(name: str) -> logging.Logger:

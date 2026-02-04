@@ -19,7 +19,7 @@ def run_tests(target_dirs, ignore_dirs):
         sys.executable,
         "-m",
         "pytest",
-        test_dir
+        test_dir,
     ]
 
     # Add coverage target directories (branch coverage enabled)
@@ -52,8 +52,7 @@ def run_tests(target_dirs, ignore_dirs):
 
 if __name__ == "__main__":
     target_dirs = [
-        "scripts/core",
-        "scripts/utils"
+        "scripts"
     ]
     ignore_dirs = [
         "scripts/plugins"

@@ -105,8 +105,13 @@ class TestAppLogger:
         app_logger = AppLogger(inputdataname="data2")
         logger = app_logger.init_logger(level_str="DEBUG")
 
-        # ハンドラが重複追加されていないことを確認
-        assert len(root_logger.handlers) == initial_handler_count
+        app_handlers = [
+            h for h in root_logger.handlers
+            if getattr(h, "name", None) == "etl_framework_backend_handler"
+        ]
+
+        assert len(app_handlers) == 1
+        assert logger.level == logging.DEBUG
 
         # CustomFormatter の inputdataname が更新されていることを確認
         has_updated_formatter = any(
@@ -160,7 +165,13 @@ class TestAppLogger:
         logger = app_logger.init_logger(level_str="INFO")
 
         # CustomFormatter の inputdataname が更新されていることを確認
-        assert handler.formatter.inputdataname == "new_data"
+        app_handler = next(
+            h for h in root_logger.handlers
+            if getattr(h, "name", None) == "etl_framework_backend_handler"
+        )
+
+        assert isinstance(app_handler.formatter, CustomFormatter)
+        assert app_handler.formatter.inputdataname == "new_data"
 
     def test_init_logger_handler_formatter_not_custom(self):
         """

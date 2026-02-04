@@ -52,6 +52,9 @@ pyproj==3.6.1
 shapely==2.0.4
 geopandas==0.14.4
 
+# For Office
+openpyxl==3.1.2
+
 # For Validator plugins
 jsonschema==4.23.0
 
