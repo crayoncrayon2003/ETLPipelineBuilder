@@ -12,7 +12,7 @@ applogger = AppLogger(inputdataname="MainModule")
 applogger.init_logger("INFO")
 logger = setup_logger(__name__)
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.pipeline.step_executor import StepExecutor
 
 def ensure_dir_exists(path):
@@ -52,6 +52,9 @@ def main():
             }
         }
         http_result_container = step_executor.execute_step(http_step_config)
+        print(http_result_container)
+        if (DataContainerStatus.ERROR == http_result_container.get_status()):
+            raise Exception("Step 1 failed, stopping pipeline execution.")
 
         logger.info("[Step 2: with_duckdb]")
         duckdb_step_config = {
@@ -64,10 +67,11 @@ def main():
                 "table_name": "source_data"
             }
         }
-        duckdb_result_container = step_executor.execute_step(
-            duckdb_step_config,
-            inputs={"input_data": http_result_container}
-        )
+        duckdb_result_container = step_executor.execute_step(duckdb_step_config, inputs={"input_data": http_result_container})
+        print(duckdb_result_container)
+        if (DataContainerStatus.ERROR == duckdb_result_container.get_status()):
+            raise Exception("Step 2 failed, stopping pipeline execution.")
+
 
         logger.info("[Step 3: with_jinja2]")
         jinja2_step_config = {
@@ -83,6 +87,9 @@ def main():
             jinja2_step_config,
             inputs={"input_data": duckdb_result_container}
         )
+        print(jinja2_result_container)
+        if (DataContainerStatus.ERROR == jinja2_result_container.get_status()):
+            raise Exception("Step 3 failed, stopping pipeline execution.")
 
         logger.info("--- Pipeline execution finished successfully! ---")
 

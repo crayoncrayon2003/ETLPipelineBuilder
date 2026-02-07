@@ -1,0 +1,66 @@
+{
+  "name": "Untitled Pipeline",
+  "schedule": null,
+  "nodes": [
+    {
+      "id": "node-from_http_with_basic_auth-1755308197399",
+      "plugin": "from_http_with_basic_auth",
+      "params": {
+        "url": "http://localhost:8080/device_data.csv",
+        "username" : "${secrets.env://MY_HTTP_BASIC_USERNAME2}",
+        "password" : "local_secret_${secrets.env://MY_HTTP_BASIC_PASSWORD2}",
+        "output_path": "ETLPipelineBuilder/test/data/Step1/device_data.csv"
+      },
+      "_ui": {
+        "position": {
+          "x": 109,
+          "y": 167.5
+        }
+      }
+    },
+    {
+      "id": "node-with_jinja2-1755308211580",
+      "plugin": "with_jinja2",
+      "params": {
+        "input_path": "ETLPipelineBuilder/test/data/Step3/run_pipeline_gui.csv",
+        "output_path": "ETLPipelineBuilder/test/data/Step5/run_pipeline_gui.json",
+        "template_path": "ETLPipelineBuilder/test/data/Step4/step4.j2"
+      },
+      "_ui": {
+        "position": {
+          "x": 630.2769282245193,
+          "y": 379.3516745225435
+        }
+      }
+    },
+    {
+      "id": "node-with_duckdb-1755308214657",
+      "plugin": "with_duckdb",
+      "params": {
+        "input_path": "ETLPipelineBuilder/test/data/Step1/device_data.csv",
+        "input_encoding": "utf-8",
+        "output_path": "ETLPipelineBuilder/test/data/Step3/run_pipeline_gui.csv",
+        "query_file": "ETLPipelineBuilder/test/data/Step2/step2_with_duckdb.sql",
+        "table_name": "source_data"
+      },
+      "_ui": {
+        "position": {
+          "x": 367.79300652504367,
+          "y": 276.3360964157011
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_node_id": "node-from_http_with_basic_auth-1755308197399",
+      "target_node_id": "node-with_duckdb-1755308214657",
+      "target_input_name": "input_data"
+    },
+    {
+      "source_node_id": "node-with_duckdb-1755308214657",
+      "target_node_id": "node-with_jinja2-1755308211580",
+      "target_input_name": "input_data"
+    }
+  ]
+}

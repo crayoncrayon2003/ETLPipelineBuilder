@@ -35,15 +35,26 @@ source env/bin/activate
 ```
 
 ## 2.2. Run
-### 2.2.1. Run Dummy Server
+### 2.2.1. Case1
+Run Dummy Server
 ```
 (env) python test/Server/TestWebServer.py
 ```
 
-### 2.2.2. Run Pipeline
+Run Pipeline
 ```
 (env) python run_pipeline_directly1.py
 (env) python run_pipeline_directly2.py
+```
+
+### 2.2.1. Case2
+Run Dummy Server
+```
+(env) python test/Server/TestWebServerBasicAuth.py
+```
+
+Run Pipeline
+```
 (env) python run_pipeline_directly3.py
 (env) python run_pipeline_directly4.py
 ```
@@ -142,7 +153,9 @@ The BuckEnd App is a pipeline framework.
 The BuckEnd App works without the FrontEnd App.
 
 ```
-(env) python run_pipeline_with_parameter_file.py ../test/pipelines/pipeline.json
+(env) python run_pipeline_with_parameter_file1.py ../test/pipelines/pipeline1.json
+
+(env) python run_pipeline_with_parameter_file2.py ../test/pipelines/pipeline2.json
 ```
 
 ### 3.3.4. clean up
