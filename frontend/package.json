@@ -10,7 +10,26 @@
     "lint": "...",
     "preview": "...",
     "electron:start": "electron electron/main.cjs",
-    "start": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:start\""
+    "start": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:start\"",
+    "build-win-exe": "vite build && electron-builder --win",
+    "build-linux-AppImage": "vite build && electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.example.frontend",
+    "productName": "ETLPipelineBuilder",
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "dist_electron"
+    }
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

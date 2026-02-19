@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import re
 import os
+import platform
 
 from prefect import flow, task
 
@@ -35,6 +36,10 @@ def _normalize_path(path_str: str, project_root: str) -> str:
         return wsl_match.group(2)
     win_match = re.match(r"^([a-zA-Z]):/", normalized_str)
     if win_match:
+        # for Windows, we convert to WSL path format. For non-Windows, we assume it's already a valid path.
+        if platform.system() == "Windows":
+            return path_str
+
         drive = win_match.group(1).lower()
         path_remainder = normalized_str[len(win_match.group(0)):]
         return f"/mnt/{drive}/{path_remainder}"
