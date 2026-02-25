@@ -34,6 +34,7 @@ def _normalize_file_path(path: str, project_root: str) -> str:
     return _normalize_local_path(local_path, project_root)
 
 def _normalize_local_path(path: str, project_root: str) -> str:
+
     p = Path(path)
     if p.is_absolute():
         return str(p)

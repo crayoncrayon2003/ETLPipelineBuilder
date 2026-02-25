@@ -105,7 +105,7 @@ def read_secret(param_value: str, resolver=None, **kwargs: Any) -> str:
             resolved_value = resolver.read(secret_key, **kwargs)
 
             if resolved_value is None:
-                raise RuntimeError(f"Secret '{secret_key}' returned None")
+                return None
 
             # Step 2-2: If resolved successfully, replace with the resolved value
             result = result[:start_pos] + str(resolved_value) + result[end_pos:]
@@ -136,3 +136,4 @@ def write_secret(secret_reference: str, secret_value: str, resolver=None, **kwar
             resolver.write(secret_ref, secret_value, **kwargs)
         except Exception as e:
             raise RuntimeError(f"Failed to write secret '{secret_ref}': {e}") from e
+

@@ -61,11 +61,34 @@ class DotEnvSecretResolver(BaseSecretResolver):
             self.dotenv_path = os.path.join(os.getcwd(), '.env')
             logger.info(f"No existing .env file found. New '.env' file will be created at '{self.dotenv_path}' if writing is attempted.")
 
+    def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
+
+        try:
+            data = json.loads(value)
+            for key in key_path.split("."):
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if not isinstance(data, dict):
+                    return None
+                data = data.get(key)
+                if data is None:
+                    return None
+            return str(data)
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(f"Failed to resolve nested key '{key_path}'")
+            return None
+
     def read(self, secret_reference: str) -> Optional[str]:
-        env_match = re.match(r"^env://(.+)$", secret_reference)
+        env_match = re.match(r"^env://([^@]+)(?:@(.+))?$", secret_reference)
         if env_match:
             env_var_name = env_match.group(1)
-            return os.getenv(env_var_name)
+            json_key_path = env_match.group(2)
+            value = os.getenv(env_var_name)
+            if value is None:
+                return None
+            if json_key_path:
+                return self._resolve_nested_key(value, json_key_path)
+            return value
         else:
             logger.warning(f"DotEnvSecretResolver received unsupported reference format for read: '{secret_reference}'.")
             return None
@@ -165,6 +188,25 @@ class AWSSecretResolver(BaseSecretResolver):
             return None
 
     # ---------------------------------------------------------------------
+    # AWS Secrets Manager / AWS Parameter Store / AWS KMS Encrypt/Decrypt ���ʏ���
+    # ---------------------------------------------------------------------
+    def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
+        try:
+            data = json.loads(value)
+            for key in key_path.split("."):
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if not isinstance(data, dict):
+                    return None
+                data = data.get(key)
+                if data is None:
+                    return None
+            return str(data)
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(f"Failed to resolve nested key '{key_path}'")
+            return None
+
+    # ---------------------------------------------------------------------
     # AWS Secrets Manager
     # ---------------------------------------------------------------------
     def _read_from_secretsmanager(self, secret_reference: str) -> Optional[str]:
@@ -172,19 +214,14 @@ class AWSSecretResolver(BaseSecretResolver):
         if not sm_match:
             return None
         secret_name = sm_match.group(1)
-        json_key = sm_match.group(2)
+        json_key_path = sm_match.group(2)  # ex. "secret_name.key"
         try:
             response = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
             secret_string = response.get("SecretString")
             if not secret_string:
                 return None
-            if json_key:
-                try:
-                    secret_data = json.loads(secret_string)
-                    return str(secret_data.get(json_key))
-                except json.JSONDecodeError:
-                    logger.warning(f"Secret '{secret_name}' is not JSON but key '{json_key}' requested.")
-                    return None
+            if json_key_path:
+                return self._resolve_nested_key(secret_string, json_key_path)
             return secret_string
         except ClientError as e:
             logger.error(f"Failed to read secret '{secret_name}': {e}")
@@ -228,13 +265,17 @@ class AWSSecretResolver(BaseSecretResolver):
     # AWS Parameter Store
     # ---------------------------------------------------------------------
     def _read_from_parameterstore(self, secret_reference: str) -> Optional[str]:
-        ps_match = re.match(r"^aws_parameterstore://(.+)$", secret_reference)
+        ps_match = re.match(r"^aws_parameterstore://([^@]+)(?:@(.+))?$", secret_reference)
         if not ps_match:
             return None
         param_name = ps_match.group(1)
+        json_key_path = ps_match.group(2)
         try:
             response = self.ssm_client.get_parameter(Name=param_name, WithDecryption=True)
-            return response["Parameter"]["Value"]
+            value = response["Parameter"]["Value"]
+            if json_key_path:
+                return self._resolve_nested_key(value, json_key_path)
+            return value
         except ClientError as e:
             logger.error(f"Failed to read parameter '{param_name}': {e}")
             return None
@@ -262,14 +303,18 @@ class AWSSecretResolver(BaseSecretResolver):
     # AWS KMS Encrypt/Decrypt
     # ---------------------------------------------------------------------
     def _decrypt_with_kms(self, secret_reference: str) -> Optional[str]:
-        kms_match = re.match(r"^aws_kms_decrypt://(.+)$", secret_reference)
+        kms_match = re.match(r"^aws_kms_decrypt://([^@]+)(?:@(.+))?$", secret_reference)
         if not kms_match:
             return None
         ciphertext_b64 = kms_match.group(1)
+        json_key_path = kms_match.group(2)
         try:
             ciphertext = base64.b64decode(ciphertext_b64)
             response = self.kms_client.decrypt(CiphertextBlob=ciphertext)
-            return response["Plaintext"].decode("utf-8")
+            decrypted_value = response["Plaintext"].decode("utf-8")
+            if json_key_path:
+                return self._resolve_nested_key(decrypted_value, json_key_path)
+            return decrypted_value
         except Exception as e:
             logger.error(f"Failed to decrypt value with KMS: {e}")
             return None

@@ -204,6 +204,9 @@ class StorageAdapter:
         normalized_remote_path = normalize_path(remote_path, os.getcwd())
 
         if is_remote_path(remote_path):
+            if normalized_remote_path.endswith("/"):
+                normalized_remote_path = normalized_remote_path + os.path.basename(local_path)
+
             try:
                 import boto3
                 s3 = boto3.client('s3')
