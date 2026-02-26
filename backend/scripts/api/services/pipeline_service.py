@@ -24,6 +24,7 @@ def execute_step_api_task(
     inputs = inputs or {}
     step_executor = StepExecutor()
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
+    logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
     return step_executor.execute_step(step_config, inputs)
 
 def _normalize_path(path_str: str, project_root: str) -> str:

@@ -188,7 +188,7 @@ class AWSSecretResolver(BaseSecretResolver):
             return None
 
     # ---------------------------------------------------------------------
-    # AWS Secrets Manager / AWS Parameter Store / AWS KMS Encrypt/Decrypt ���ʏ���
+    # AWS Secrets Manager / AWS Parameter Store / AWS KMS Encrypt/Decrypt 
     # ---------------------------------------------------------------------
     def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
         try:
