@@ -1,57 +1,80 @@
 import os
+import threading
 from typing import Optional
+
 from core.infrastructure.env_detector import is_running_on_aws
+
 
 class SparkSessionFactory:
     _spark_session: Optional["object"] = None  # SparkSession or Glue SparkSession
     _glue_context: Optional["object"] = None   # GlueContext for AWS
+    _lock: threading.Lock = threading.Lock()
 
     @staticmethod
     def get_spark_session():
-        if SparkSessionFactory._spark_session:
+        if SparkSessionFactory._spark_session is not None:
             return SparkSessionFactory._spark_session
 
-        if is_running_on_aws():
-            from pyspark.context import SparkContext
-            from awsglue.context import GlueContext
+        with SparkSessionFactory._lock:
+            if SparkSessionFactory._spark_session is not None:
+                return SparkSessionFactory._spark_session
 
-            sc = SparkContext.getOrCreate()
-            glue_context = GlueContext(sc)
-            SparkSessionFactory._glue_context = glue_context
-            SparkSessionFactory._spark_session = glue_context.spark_session
+            if is_running_on_aws():
+                from pyspark.context import SparkContext
+                from awsglue.context import GlueContext
 
-        else:
-            from pyspark import SparkConf
-            from pyspark.sql import SparkSession
+                sc = SparkContext.getOrCreate()
+                glue_context = GlueContext(sc)
+                SparkSessionFactory._glue_context = glue_context
+                SparkSessionFactory._spark_session = glue_context.spark_session
 
-            PYTHON_PATH = "/usr/bin/python3.9"
-            os.environ["PYSPARK_PYTHON"] = PYTHON_PATH
-            os.environ["PYSPARK_DRIVER_PYTHON"] = PYTHON_PATH
-            os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-11-openjdk-amd64"
+            else:
+                from pyspark import SparkConf
+                from pyspark.sql import SparkSession
 
-            conf = SparkConf() \
-                .set("spark.executor.memory", "2g") \
-                .set("spark.driver.memory", "2g") \
-                .set("spark.executor.cores", "4") \
-                .set("spark.sql.shuffle.partitions", "10")
+                os.environ.setdefault("PYSPARK_PYTHON", "/usr/bin/python3.9")
+                os.environ.setdefault("PYSPARK_DRIVER_PYTHON", "/usr/bin/python3.9")
+                os.environ.setdefault("JAVA_HOME", "/usr/lib/jvm/java-11-openjdk-amd64")
 
-            spark = SparkSession.builder \
-                .appName("ETLFrameworkSpark") \
-                .config(conf=conf) \
-                .getOrCreate()
+                conf = (
+                    SparkConf()
+                    .set("spark.executor.memory", "2g")
+                    .set("spark.driver.memory", "2g")
+                    .set("spark.executor.cores", "4")
+                    .set("spark.sql.shuffle.partitions", "10")
+                )
 
-            SparkSessionFactory._spark_session = spark
+                spark = (
+                    SparkSession.builder
+                    .appName("ETLFrameworkSpark")
+                    .config(conf=conf)
+                    .getOrCreate()
+                )
+
+                SparkSessionFactory._spark_session = spark
 
         return SparkSessionFactory._spark_session
 
     @staticmethod
     def stop_spark_session():
-        if SparkSessionFactory._spark_session and not is_running_on_aws():
-            SparkSessionFactory._spark_session.stop()
-            SparkSessionFactory._spark_session = None
+        if is_running_on_aws():
+            return
+
+        with SparkSessionFactory._lock:
+            if SparkSessionFactory._spark_session is not None:
+                SparkSessionFactory._spark_session.stop()
+                SparkSessionFactory._spark_session = None
+                SparkSessionFactory._glue_context = None
 
     @staticmethod
     def get_glue_context():
-        if not SparkSessionFactory._glue_context:
+        if not is_running_on_aws():
+            raise RuntimeError(
+                "GlueContext is only available on AWS Glue. "
+                "get_glue_context() cannot be called in a local environment."
+            )
+
+        if SparkSessionFactory._glue_context is None:
             SparkSessionFactory.get_spark_session()
+
         return SparkSessionFactory._glue_context

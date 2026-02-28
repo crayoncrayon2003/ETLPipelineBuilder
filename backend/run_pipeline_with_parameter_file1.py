@@ -33,7 +33,13 @@ def execute_step_batch_task(
     step_executor = StepExecutor()
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
     logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
-    return step_executor.execute_step(step_config, inputs)
+
+    result_container = step_executor.execute_step(step_config, inputs)
+    print(result_container)
+    if (DataContainerStatus.ERROR == result_container.get_status()):
+        raise Exception(f"'{step_name}' failed, stopping pipeline execution.")
+
+    return result_container
 
 
 def _submit_node_task_batch(

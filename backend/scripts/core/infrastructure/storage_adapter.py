@@ -2,15 +2,14 @@ import os
 import pandas as pd
 import shutil
 from typing import Dict, Any, Optional, Union
-import s3fs
-from datetime import datetime
-import botocore.exceptions
+from datetime import datetime, timezone
+
 from core.data_container.formats import SupportedFormats
 from .storage_path_utils import normalize_path, is_remote_path, is_local_path, parse_s3_path
-
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
 
 class StorageAdapter:
 
@@ -72,7 +71,9 @@ class StorageAdapter:
                     raise ValueError(f"Spark write not supported for format '{file_format.value}'")
             else:
                 if not is_remote_path(path):
-                    os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
+                    parent = os.path.dirname(normalized_path)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
                 if file_format == SupportedFormats.CSV:
                     df.to_csv(normalized_path, index=False, storage_options=options, **write_opts)
                 elif file_format == SupportedFormats.PARQUET:
@@ -92,6 +93,7 @@ class StorageAdapter:
         try:
             normalized_path = normalize_path(path, os.getcwd())
             if is_remote_path(path):
+                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
                 s3 = s3fs.S3FileSystem()
                 with s3.open(normalized_path, 'r', encoding=encoding) as f:
                     return f.read()
@@ -111,13 +113,16 @@ class StorageAdapter:
         normalized_path = normalize_path(path, os.getcwd())
         if is_remote_path(path):
             try:
+                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
                 s3 = s3fs.S3FileSystem()
                 with s3.open(normalized_path, 'w', encoding=encoding) as f:
                     f.write(text_content)
             except ImportError:
                 raise ImportError("s3fs is required for writing text to S3.")
         else:
-            os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
+            parent = os.path.dirname(normalized_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(normalized_path, 'w', encoding=encoding) as f:
                 f.write(text_content)
 
@@ -126,6 +131,7 @@ class StorageAdapter:
         try:
             normalized_path = normalize_path(path, os.getcwd())
             if is_remote_path(path):
+                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
                 s3 = s3fs.S3FileSystem()
                 with s3.open(normalized_path, 'rb') as f:
                     return f.read()
@@ -145,20 +151,25 @@ class StorageAdapter:
         normalized_path = normalize_path(path, os.getcwd())
         if is_remote_path(path):
             try:
+                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
                 s3 = s3fs.S3FileSystem()
                 with s3.open(normalized_path, 'wb') as f:
                     f.write(content)
             except ImportError:
                 raise ImportError("s3fs is required for writing bytes to S3.")
         else:
-            os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
+            parent = os.path.dirname(normalized_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(normalized_path, 'wb') as f:
                 f.write(content)
 
     def download_remote_file(self, remote_path: str, local_path: Union[str, os.PathLike]):
         local_path = os.path.abspath(local_path)
         logger.info(f"Downloading remote file '{remote_path}' to '{local_path}'...")
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        parent = os.path.dirname(local_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         normalized_remote_path = normalize_path(remote_path, os.getcwd())
 
         if is_remote_path(remote_path):
@@ -201,7 +212,9 @@ class StorageAdapter:
                 logger.error(f"Failed to upload to S3: {e}")
                 raise
         else:
-            os.makedirs(os.path.dirname(normalized_remote_path), exist_ok=True)
+            parent = os.path.dirname(normalized_remote_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             shutil.copy(local_path, normalized_remote_path)
             logger.info("Copied to local path complete.")
 
@@ -239,6 +252,7 @@ class StorageAdapter:
         if is_remote_path(path):
             try:
                 import boto3
+                import botocore.exceptions  # 遅延import: boto3とセットで読み込む
                 s3 = boto3.client("s3")
                 bucket, key = parse_s3_path(normalized_path)
                 try:
@@ -337,16 +351,13 @@ class StorageAdapter:
                 return True
 
             prefix = key.rstrip('/') + "/"
-
             response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
             return "Contents" in response
         else:
             if os.path.isdir(normalized_path):
                 return True
-
             _, ext = os.path.splitext(normalized_path)
             return ext == ""
-
 
     def rename(self, old_path: str, new_path: str):
         """
@@ -366,15 +377,16 @@ class StorageAdapter:
                 Key=new_key,
             )
             s3.delete_object(Bucket=old_bucket, Key=old_key)
-            logger.info(f"Renamed S3 object: {old_normalized} → {new_normalized}")
+            logger.info(f"Renamed S3 object: {old_normalized} -> {new_normalized}")
         else:
             os.rename(old_normalized, new_normalized)
-            logger.info(f"Renamed local file: {old_normalized} → {new_normalized}")
+            logger.info(f"Renamed local file: {old_normalized} -> {new_normalized}")
 
     def stat(self, path: str) -> Dict[str, Any]:
         """
         Get file metadata (size, modified time, etc.).
         Returns a dictionary with common fields.
+        last_modified は常に timezone-aware (UTC) な datetime で返す。
         """
         normalized_path = normalize_path(path, os.getcwd())
         if is_remote_path(path):
@@ -384,7 +396,7 @@ class StorageAdapter:
             response = s3.head_object(Bucket=bucket, Key=key)
             return {
                 "size": response["ContentLength"],
-                "last_modified": response["LastModified"],
+                "last_modified": response["LastModified"],  # S3はUTC aware datetime
                 "content_type": response.get("ContentType"),
                 "etag": response.get("ETag"),
                 "storage_class": response.get("StorageClass", "STANDARD"),
@@ -393,11 +405,13 @@ class StorageAdapter:
             stat_result = os.stat(normalized_path)
             return {
                 "size": stat_result.st_size,
-                "last_modified": datetime.fromtimestamp(stat_result.st_mtime),
+                # timezone.utc を明示してS3のlast_modifiedと型を統一する
+                "last_modified": datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc),
                 "mode": stat_result.st_mode,
                 "uid": stat_result.st_uid,
                 "gid": stat_result.st_gid,
             }
+
 
 # Singleton instance
 storage_adapter = StorageAdapter()

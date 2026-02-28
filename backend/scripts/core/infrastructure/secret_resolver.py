@@ -1,18 +1,20 @@
 import os
-from abc import ABC, abstractmethod
-from dotenv import load_dotenv, find_dotenv
-from typing import Dict, Any, Optional
-import json
 import re
+import json
 import base64
-import boto3
-from botocore.exceptions import ClientError
-import portalocker
-from core.infrastructure.env_detector import is_running_on_aws
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
 
+import boto3
+import portalocker
+from botocore.exceptions import ClientError
+from dotenv import load_dotenv, find_dotenv
+
+from core.infrastructure.env_detector import is_running_on_aws
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
 
 # ==============================================================================
 # Common Exception Class
@@ -28,13 +30,11 @@ class SecretWriteError(SecretResolverError):
     """Custom exception for secret writing failures."""
     pass
 
+
 # ==============================================================================
 # Abstract Base Class
 # ==============================================================================
 class BaseSecretResolver(ABC):
-    """
-    Abstract base class for secret resolution strategies.
-    """
     @abstractmethod
     def read(self, secret_reference: str) -> Optional[str]:
         pass
@@ -42,6 +42,7 @@ class BaseSecretResolver(ABC):
     @abstractmethod
     def write(self, secret_reference: str, secret_value: str, **kwargs: Any) -> None:
         pass
+
 
 # ==============================================================================
 # Resolving secrets via .env file
@@ -62,7 +63,6 @@ class DotEnvSecretResolver(BaseSecretResolver):
             logger.info(f"No existing .env file found. New '.env' file will be created at '{self.dotenv_path}' if writing is attempted.")
 
     def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
-
         try:
             data = json.loads(value)
             for key in key_path.split("."):
@@ -138,14 +138,11 @@ class DotEnvSecretResolver(BaseSecretResolver):
         except Exception as e:
             raise SecretWriteError(f"Failed to write .env secret: {e}")
 
+
 # ==============================================================================
 # Reading/Writing secrets via AWS service
 # ==============================================================================
 class AWSSecretResolver(BaseSecretResolver):
-    """
-    A Secret Resolver compatible with AWS Secrets Manager, Parameter Store, and KMS,
-    supporting both read and write operations
-    """
 
     def __init__(self):
         super().__init__()
@@ -162,9 +159,6 @@ class AWSSecretResolver(BaseSecretResolver):
             self.ssm_client = None
             self.kms_client = None
 
-    # ---------------------------------------------------------------------
-    # Public Interface (BaseSecretResolver Implementation)
-    # ---------------------------------------------------------------------
     def read(self, secret_reference: str) -> Optional[str]:
         if secret_reference.startswith("aws_secretsmanager://"):
             return self._read_from_secretsmanager(secret_reference)
@@ -184,12 +178,13 @@ class AWSSecretResolver(BaseSecretResolver):
         elif secret_reference.startswith("aws_kms_encrypt://"):
             return self._encrypt_with_kms(secret_reference, secret_value, kwargs.get("encryption_context"))
         else:
-            logger.warning(f"Unsupported write target: {secret_reference}")
-            return None
+            # 修正2: DotEnvSecretResolver.write() との一貫性のため SecretWriteError を raise する
+            # 修正前は logger.warning と return None のみで、呼び出し側が失敗に気づけなかった
+            raise SecretWriteError(
+                f"AWSSecretResolver received unsupported reference format "
+                f"for writing: '{secret_reference}'."
+            )
 
-    # ---------------------------------------------------------------------
-    # AWS Secrets Manager / AWS Parameter Store / AWS KMS Encrypt/Decrypt 
-    # ---------------------------------------------------------------------
     def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
         try:
             data = json.loads(value)
@@ -206,15 +201,36 @@ class AWSSecretResolver(BaseSecretResolver):
             logger.warning(f"Failed to resolve nested key '{key_path}'")
             return None
 
-    # ---------------------------------------------------------------------
+    @staticmethod
+    def _set_nested_key(data: dict, key_path: str, value: str) -> dict:
+        """
+        key_path ("a.b.c" 形式) に従ってネストした辞書に値をセットする。
+
+        修正3: _write_to_secretsmanager() のネストキー対応
+        修正前は data[json_key] = secret_value と書いており、
+        "a.b" というフラットなキーで書き込まれていた。
+        read() は key_path.split(".") で多段ネストをたどるため、
+        write したものを read で取得できない非対称が生じていた。
+        本メソッドにより read/write の階層構造を一致させる。
+        """
+        keys = key_path.split(".")
+        target = data
+        for key in keys[:-1]:
+            if key not in target or not isinstance(target[key], dict):
+                target[key] = {}
+            target = target[key]
+        target[keys[-1]] = value
+        return data
+
+    # ------------------------------------------------------------------
     # AWS Secrets Manager
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def _read_from_secretsmanager(self, secret_reference: str) -> Optional[str]:
         sm_match = re.match(r"^aws_secretsmanager://([^@]+)(?:@(.+))?$", secret_reference)
         if not sm_match:
             return None
         secret_name = sm_match.group(1)
-        json_key_path = sm_match.group(2)  # ex. "secret_name.key"
+        json_key_path = sm_match.group(2)
         try:
             response = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
             secret_string = response.get("SecretString")
@@ -239,7 +255,11 @@ class AWSSecretResolver(BaseSecretResolver):
                 resp = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
                 current_secret = resp.get("SecretString", "{}")
             except self.secretsmanager_client.exceptions.ResourceNotFoundException:
-                payload = secret_value if not json_key else json.dumps({json_key: secret_value})
+                # 新規作成: json_key がある場合は適切なネスト構造で作成
+                if json_key:
+                    payload = json.dumps(self._set_nested_key({}, json_key, secret_value))
+                else:
+                    payload = secret_value
                 self.secretsmanager_client.create_secret(Name=secret_name, SecretString=payload)
                 logger.info(f"Secret '{secret_name}' created successfully.")
                 return
@@ -249,7 +269,10 @@ class AWSSecretResolver(BaseSecretResolver):
                     data = json.loads(current_secret)
                 except json.JSONDecodeError:
                     data = {}
-                data[json_key] = secret_value
+                # 修正3: "a.b" をフラットキーとして使うのではなくネスト構造で書き込む
+                # 修正前: data[json_key] = secret_value  ("a.b" というキーが直接作られる)
+                # 修正後: _set_nested_key() でネスト階層をたどって書き込む
+                self._set_nested_key(data, json_key, secret_value)
                 secret_value_to_put = json.dumps(data)
             else:
                 secret_value_to_put = secret_value
@@ -261,9 +284,9 @@ class AWSSecretResolver(BaseSecretResolver):
             logger.error(f"Failed to write secret '{secret_name}': {e}")
             raise SecretWriteError(f"Failed to write secret '{secret_name}': {e}")
 
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # AWS Parameter Store
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def _read_from_parameterstore(self, secret_reference: str) -> Optional[str]:
         ps_match = re.match(r"^aws_parameterstore://([^@]+)(?:@(.+))?$", secret_reference)
         if not ps_match:
@@ -299,9 +322,9 @@ class AWSSecretResolver(BaseSecretResolver):
             logger.error(f"Failed to write parameter '{param_name}': {e}")
             raise SecretWriteError(f"Failed to write parameter '{param_name}': {e}")
 
-    # ---------------------------------------------------------------------
-    # AWS KMS Encrypt/Decrypt
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # AWS KMS
+    # ------------------------------------------------------------------
     def _decrypt_with_kms(self, secret_reference: str) -> Optional[str]:
         kms_match = re.match(r"^aws_kms_decrypt://([^@]+)(?:@(.+))?$", secret_reference)
         if not kms_match:
@@ -320,10 +343,6 @@ class AWSSecretResolver(BaseSecretResolver):
             return None
 
     def _encrypt_with_kms(self, secret_reference: str, plaintext: str, encryption_context: Optional[Dict[str, str]] = None) -> str:
-        """
-        Encrypt plaintext using KMS key, supporting consistent read/write.
-        Raises SecretWriteError on failure.
-        """
         kms_match = re.match(r"^aws_kms_encrypt://(.+)$", secret_reference)
         if not kms_match:
             raise SecretWriteError(f"Invalid KMS encrypt reference: {secret_reference}")
@@ -348,8 +367,7 @@ class AWSSecretResolver(BaseSecretResolver):
 # Factory
 # ==============================================================================
 def get_secret_resolver() -> BaseSecretResolver:
-    is_aws_env = is_running_on_aws()
-    if is_aws_env:
+    if is_running_on_aws():
         return AWSSecretResolver()
     else:
         return DotEnvSecretResolver()

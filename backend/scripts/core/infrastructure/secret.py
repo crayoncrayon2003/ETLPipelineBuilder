@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional, List, Tuple
 import re
 
+
 def read_secret_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str, Any]:
     """
     Recursively resolves secret references within a dictionary.
@@ -13,13 +14,10 @@ def read_secret_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str, Any]
 
     for k, v in params.items():
         if isinstance(v, str):
-            # Resolve secret references within the string
             resolved_params[k] = read_secret(v, resolver=resolver)
         elif isinstance(v, dict):
-            # Recursively process dictionaries
             resolved_params[k] = read_secret_in_dict(v, resolver)
         elif isinstance(v, list):
-            # Process elements within lists
             resolved_params[k] = [
                 read_secret_in_dict(item, resolver) if isinstance(item, dict)
                 else read_secret(item, resolver) if isinstance(item, str)
@@ -36,9 +34,6 @@ def extract_secret_references(text: str) -> List[Tuple[str, int, int]]:
     """
     Extracts all ${secrets.xxx} patterns from a string.
 
-    Parameters:
-        text: The string to search
-
     Returns:
         List[Tuple[str, int, int]]:
             - Element 1: Full secret reference (e.g., "${secrets.env://MY_KEY}")
@@ -49,7 +44,7 @@ def extract_secret_references(text: str) -> List[Tuple[str, int, int]]:
     matches = []
 
     for match in pattern.finditer(text):
-        full_reference = match.group(0)  # Full "${secrets.env://MY_KEY}"
+        full_reference = match.group(0)
         start_pos = match.start()
         end_pos = match.end()
         matches.append((full_reference, start_pos, end_pos))
@@ -57,61 +52,69 @@ def extract_secret_references(text: str) -> List[Tuple[str, int, int]]:
     return matches
 
 
-def read_secret(param_value: str, resolver=None, **kwargs: Any) -> str:
+def read_secret(param_value: Any, resolver=None, **kwargs: Any) -> Optional[Any]:
     """
     Detects and resolves ${secrets.xxx} patterns within a string.
 
     Processing flow:
-    1. Extract all ${secrets.xxx} references
-    2. Loop through the list
-       2-1. Resolve the detected ${secrets.xxx}
-       2-2. If resolved successfully, replace the detected part with the resolved value
-       2-3. If resolution fails, raise an error (or skip to next)
+    1. If param_value is not a str, return as-is
+    2. Extract all ${secrets.xxx} references
+    3. If none found, return as-is
+    4. Resolve from back to front (avoids index shifting on replacement)
+       4-1. Resolve each reference via resolver.read()
+       4-2. If resolved, replace the matched portion with the resolved value
+       4-3. If None is returned, return None immediately
+       4-4. If an exception occurs, raise RuntimeError
 
     Parameters:
-        param_value: The string to process
-        resolver: Secret resolver (uses default if None)
-        **kwargs: Additional parameters to pass to the resolver
+        param_value: The value to process (any type; only str is processed)
+        resolver: Secret resolver (uses default singleton if None)
+        **kwargs: Additional parameters passed to the resolver
 
     Returns:
-        String with secrets resolved
+        - Resolved string if all references resolved successfully
+        - None if any reference resolved to None
+        - Original value (non-str) unchanged
 
     Examples:
-        "Bearer ${secrets.env://MY_TOKEN}"             -> "Bearer abc123token"
+        "Bearer ${secrets.env://MY_TOKEN}"            -> "Bearer abc123token"
+        "${secrets.env://USER}:${secrets.env://PASS}" -> "test_user:secret_pass"
 
-        "${secrets.env://USER}:${secrets.env://PASS}"  -> "test_user:secret_pass_123"
+    修正4: 型アノテーションを実装に合わせて修正
+    修正前: (param_value: str, ...) -> str
+      - str でない引数をそのまま返す実装があるにもかかわらず引数型が str
+      - resolver.read() が None を返す場合があるにもかかわらず戻り値型が str
+      → mypy が誤った安全性を示していた
+    修正後: (param_value: Any, ...) -> Optional[Any]
+      - 実装の実際の動作を正確に表現する
     """
     if resolver is None:
         from core.infrastructure.secret_resolver import secret_resolver as resolver
 
+    # str 以外はそのまま返す
     if not isinstance(param_value, str):
         return param_value
 
-    # Step 1: Extract all ${secrets.xxx} references
+    # ${secrets.xxx} パターンを全て抽出
     secret_references = extract_secret_references(param_value)
 
     if not secret_references:
-        # Return as-is if no secret references found
         return param_value
 
-    # Step 2: Loop through the list (process from back to front to avoid index shifting)
+    # 後ろから順に置換 (インデックスずれ防止)
     result = param_value
     for full_reference, start_pos, end_pos in reversed(secret_references):
-        # Extract "env://MY_KEY" part from ${secrets.env://MY_KEY}
         secret_key = full_reference.replace("${secrets.", "").replace("}", "")
 
         try:
-            # Step 2-1: Resolve the detected ${secrets.xxx}
             resolved_value = resolver.read(secret_key, **kwargs)
 
             if resolved_value is None:
                 return None
 
-            # Step 2-2: If resolved successfully, replace with the resolved value
             result = result[:start_pos] + str(resolved_value) + result[end_pos:]
 
         except Exception as e:
-            # Step 2-3: Raise an error if resolution fails
             raise RuntimeError(f"Failed to read secret '{secret_key}': {e}") from e
 
     return result
@@ -120,7 +123,7 @@ def read_secret(param_value: str, resolver=None, **kwargs: Any) -> str:
 def write_secret(secret_reference: str, secret_value: str, resolver=None, **kwargs: Any) -> None:
     """
     Writes a secret.
-    Supports ${secrets.xxx} format references.
+    Supports both ${secrets.xxx} format and direct references (e.g. env://MY_VAR).
     """
     if resolver is None:
         from core.infrastructure.secret_resolver import secret_resolver as resolver
@@ -136,4 +139,3 @@ def write_secret(secret_reference: str, secret_value: str, resolver=None, **kwar
             resolver.write(secret_ref, secret_value, **kwargs)
         except Exception as e:
             raise RuntimeError(f"Failed to write secret '{secret_ref}': {e}") from e
-

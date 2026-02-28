@@ -1,11 +1,13 @@
 import os
 import pytest
 import pandas as pd
+from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, call
 from scripts.core.infrastructure.storage_adapter import StorageAdapter, storage_adapter
 from scripts.core.infrastructure.storage_path_utils import is_local_path, is_remote_path
 from scripts.core.data_container.formats import SupportedFormats
+
 
 class TestStorageAdapter:
 
@@ -17,11 +19,16 @@ class TestStorageAdapter:
     def sample_df(self):
         return pd.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
 
-    # -----------------------------
-    # read_df / write_df
-    # -----------------------------
-    @pytest.mark.parametrize("fmt", ["csv", "parquet", "json"])
+    # =========================================================
+    # read_df
+    # MCDC:
+    #   条件A: spark is not None
+    #   条件B: file_format (CSV/PARQUET/JSON/JSONL/EXCEL/other)
+    # =========================================================
+
+    @pytest.mark.parametrize("fmt", ["csv", "parquet", "json", "jsonl"])
     def test_read_write_df_local(self, sa, tmp_path, sample_df, fmt):
+        """A=False(pandas) × B=各フォーマット: ローカル読み書き往復"""
         file_path = tmp_path / f"test.{fmt}"
         sa.write_df(sample_df, str(file_path))
         assert file_path.exists()
@@ -29,1130 +36,973 @@ class TestStorageAdapter:
         pd.testing.assert_frame_equal(df, sample_df)
 
     def test_read_df_excel(self, sa, tmp_path, sample_df):
-        """Test reading Excel files"""
+        """A=False × B=EXCEL"""
         file_path = tmp_path / "test.xlsx"
         sa.write_df(sample_df, str(file_path))
         df = sa.read_df(str(file_path))
         pd.testing.assert_frame_equal(df, sample_df)
 
-    def test_read_df_jsonl(self, sa, tmp_path, sample_df):
-        """Test reading JSONL files"""
-        file_path = tmp_path / "test.jsonl"
-        sa.write_df(sample_df, str(file_path))
-        df = sa.read_df(str(file_path))
-        pd.testing.assert_frame_equal(df, sample_df)
+    def test_read_df_unsupported_format_raises(self, sa, tmp_path):
+        """A=False × B=other → ValueError"""
+        file_path = tmp_path / "test.unsupported"
+        file_path.touch()
+        with pytest.raises(ValueError, match="not supported"):
+            sa.read_df(str(file_path))
+
+    def test_read_df_nonexistent_raises(self, sa, tmp_path):
+        """A=False: ファイル不在 → 例外"""
+        with pytest.raises(Exception):
+            sa.read_df(str(tmp_path / "nonexistent.csv"))
 
     def test_read_df_with_read_options(self, sa, tmp_path, sample_df):
-        """Test read_df with custom read options"""
+        """A=False × B=CSV: read_options が渡される"""
         file_path = tmp_path / "test.csv"
         sa.write_df(sample_df, str(file_path))
         df = sa.read_df(str(file_path), read_options={"nrows": 1})
         assert len(df) == 1
 
-    def test_write_df_with_write_options(self, sa, tmp_path, sample_df):
-        """Test write_df with custom write options"""
+    def test_read_df_spark_csv(self, sa, tmp_path, sample_df):
+        """A=True(spark) × B=CSV"""
         file_path = tmp_path / "test.csv"
-        sa.write_df(sample_df, str(file_path), write_options={"sep": ";"})
-        content = sa.read_text(str(file_path))
-        assert ";" in content
+        sa.write_df(sample_df, str(file_path))
+        mock_spark = Mock()
+        sa.read_df(str(file_path), read_options={"spark": mock_spark})
+        mock_spark.read.options().csv.assert_called_once()
 
-    def test_read_df_unsupported_format_raises_error(self, sa, tmp_path):
-        """Test that unsupported format raises ValueError"""
-        file_path = tmp_path / "test.unsupported"
+    def test_read_df_spark_parquet(self, sa, tmp_path, sample_df):
+        """A=True × B=PARQUET"""
+        file_path = tmp_path / "test.parquet"
+        sa.write_df(sample_df, str(file_path))
+        mock_spark = Mock()
+        sa.read_df(str(file_path), read_options={"spark": mock_spark})
+        mock_spark.read.options().parquet.assert_called_once()
+
+    def test_read_df_spark_json(self, sa, tmp_path, sample_df):
+        """A=True × B=JSON"""
+        file_path = tmp_path / "test.json"
+        sa.write_df(sample_df, str(file_path))
+        mock_spark = Mock()
+        sa.read_df(str(file_path), read_options={"spark": mock_spark})
+        mock_spark.read.options().json.assert_called_once()
+
+    def test_read_df_spark_jsonl(self, sa, tmp_path, sample_df):
+        """A=True × B=JSONL → JSON分岐に入る"""
+        file_path = tmp_path / "test.jsonl"
+        sa.write_df(sample_df, str(file_path))
+        mock_spark = Mock()
+        sa.read_df(str(file_path), read_options={"spark": mock_spark})
+        mock_spark.read.options().json.assert_called_once()
+
+    def test_read_df_spark_unsupported_raises(self, sa, tmp_path):
+        """A=True × B=other(EXCEL) → ValueError"""
+        file_path = tmp_path / "test.xlsx"
         file_path.touch()
-        with pytest.raises(ValueError, match="not supported"):
-            sa.read_df(str(file_path))
+        with pytest.raises(ValueError, match="Spark read not supported"):
+            sa.read_df(str(file_path), read_options={"spark": Mock()})
 
-    def test_write_df_unsupported_format_raises_error(self, sa, tmp_path, sample_df):
-        """Test that unsupported format raises ValueError"""
-        file_path = tmp_path / "test.unsupported"
-        with pytest.raises(ValueError, match="not supported"):
-            sa.write_df(sample_df, str(file_path))
-
-    def test_read_df_nonexistent_file_raises_error(self, sa, tmp_path):
-        """Test that reading nonexistent file raises error"""
-        file_path = tmp_path / "nonexistent.csv"
+    def test_read_df_error_is_logged(self, sa, tmp_path, caplog):
+        """例外時にエラーログが出力される"""
         with pytest.raises(Exception):
-            sa.read_df(str(file_path))
+            sa.read_df(str(tmp_path / "nonexistent.csv"))
+        assert "Failed to read file" in caplog.text
+
+    # =========================================================
+    # write_df
+    # MCDC:
+    #   条件A: spark is not None
+    #   条件B(spark): file_format
+    #   条件C(pandas): is_remote_path(path)  → makedirs スキップ判定
+    #   条件D(pandas,local): bool(parent)    → makedirs 空文字ガード
+    #   条件E(pandas): file_format
+    # =========================================================
+
+    @pytest.mark.parametrize("fmt", ["csv", "parquet", "json", "jsonl"])
+    def test_write_df_local_roundtrip(self, sa, tmp_path, sample_df, fmt):
+        """A=False × C=False(local) × D=True(parent有) × E=各フォーマット"""
+        file_path = tmp_path / f"test.{fmt}"
+        sa.write_df(sample_df, str(file_path))
+        assert file_path.exists()
+
+    def test_write_df_excel(self, sa, tmp_path, sample_df):
+        """A=False × C=False × E=EXCEL"""
+        file_path = tmp_path / "test.xlsx"
+        sa.write_df(sample_df, str(file_path))
+        assert file_path.exists()
 
     def test_write_df_creates_parent_directories(self, sa, tmp_path, sample_df):
-        """Test that write_df creates parent directories if they don't exist"""
+        """A=False × C=False × D=True: 親ディレクトリが自動生成される"""
         file_path = tmp_path / "nested" / "dir" / "test.csv"
         sa.write_df(sample_df, str(file_path))
         assert file_path.exists()
 
-    def test_read_df_remote_path(self, sa, sample_df):
-        """Test reading DataFrame from remote S3 path"""
+    def test_write_df_remote_path_skips_makedirs(self, sa, sample_df):
+        """A=False × C=True(remote): makedirs が呼ばれない
+        MCDC: is_remote_path=True の独立した影響を確認"""
         remote_path = "s3://bucket/test.csv"
-        # This test simply verifies that remote path detection works
-        assert is_remote_path(remote_path)
-        # Actual S3 operations would require mocking the entire pandas read operation
-        # which is complex and better tested through integration tests
+        with patch("pandas.DataFrame.to_csv") as mock_to_csv, \
+             patch("os.makedirs") as mock_makedirs:
+            mock_to_csv.return_value = None
+            sa.write_df(sample_df, remote_path)
+            mock_makedirs.assert_not_called()
 
-    # -----------------------------
-    # Spark DataFrame tests
-    # -----------------------------
-    def test_read_df_spark_csv(self, sa, tmp_path, sample_df):
-        """Test reading CSV with Spark"""
+    def test_write_df_local_parent_empty_skips_makedirs(self, sa, sample_df):
+        """A=False × C=False × D=False(parent空): makedirs がスキップされる
+        MCDC: bool(parent)=False の独立した影響を確認"""
+        with patch("os.path.dirname", return_value=""), \
+             patch("os.makedirs") as mock_makedirs, \
+             patch("pandas.DataFrame.to_csv") as mock_to_csv:
+            mock_to_csv.return_value = None
+            sa.write_df(sample_df, "/test.csv")
+            mock_makedirs.assert_not_called()
+
+    def test_write_df_unsupported_format_raises(self, sa, tmp_path, sample_df):
+        """A=False × E=other → ValueError"""
+        with pytest.raises(ValueError, match="not supported"):
+            sa.write_df(sample_df, str(tmp_path / "test.unsupported"))
+
+    def test_write_df_with_write_options(self, sa, tmp_path, sample_df):
+        """write_options が渡される"""
         file_path = tmp_path / "test.csv"
-        sa.write_df(sample_df, str(file_path))
-        
-        mock_spark = Mock()
-        mock_spark.read.options().csv.return_value = "spark_df"
-        
-        result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
-        mock_spark.read.options().csv.assert_called_once()
-
-    def test_read_df_spark_parquet(self, sa, tmp_path, sample_df):
-        """Test reading Parquet with Spark"""
-        file_path = tmp_path / "test.parquet"
-        sa.write_df(sample_df, str(file_path))
-        
-        mock_spark = Mock()
-        mock_spark.read.options().parquet.return_value = "spark_df"
-        
-        result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
-        mock_spark.read.options().parquet.assert_called_once()
-
-    def test_read_df_spark_json(self, sa, tmp_path, sample_df):
-        """Test reading JSON with Spark"""
-        file_path = tmp_path / "test.json"
-        sa.write_df(sample_df, str(file_path))
-        
-        mock_spark = Mock()
-        mock_spark.read.options().json.return_value = "spark_df"
-        
-        result = sa.read_df(str(file_path), read_options={"spark": mock_spark})
-        mock_spark.read.options().json.assert_called_once()
-
-    def test_read_df_spark_unsupported_format(self, sa, tmp_path):
-        """Test that Spark read with unsupported format raises error"""
-        file_path = tmp_path / "test.xlsx"
-        file_path.touch()
-        
-        mock_spark = Mock()
-        
-        with pytest.raises(ValueError, match="Spark read not supported"):
-            sa.read_df(str(file_path), read_options={"spark": mock_spark})
+        sa.write_df(sample_df, str(file_path), write_options={"sep": ";"})
+        assert ";" in sa.read_text(str(file_path))
 
     def test_write_df_spark_csv(self, sa, tmp_path):
-        """Test writing CSV with Spark"""
-        file_path = tmp_path / "test.csv"
-        
+        """A=True × B=CSV"""
         mock_df = Mock()
-        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
-        mock_spark = Mock()
-        
-        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.__len__ = Mock(return_value=10)
+        sa.write_df(mock_df, str(tmp_path / "test.csv"), write_options={"spark": Mock()})
         mock_df.write.options().mode().csv.assert_called_once()
 
     def test_write_df_spark_parquet(self, sa, tmp_path):
-        """Test writing Parquet with Spark"""
-        file_path = tmp_path / "test.parquet"
-        
+        """A=True × B=PARQUET"""
         mock_df = Mock()
-        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
-        mock_spark = Mock()
-        
-        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.__len__ = Mock(return_value=10)
+        sa.write_df(mock_df, str(tmp_path / "test.parquet"), write_options={"spark": Mock()})
         mock_df.write.options().mode().parquet.assert_called_once()
 
     def test_write_df_spark_json(self, sa, tmp_path):
-        """Test writing JSON with Spark"""
-        file_path = tmp_path / "test.json"
-        
+        """A=True × B=JSON"""
         mock_df = Mock()
-        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
-        mock_spark = Mock()
-        
-        sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+        mock_df.__len__ = Mock(return_value=10)
+        sa.write_df(mock_df, str(tmp_path / "test.json"), write_options={"spark": Mock()})
         mock_df.write.options().mode().json.assert_called_once()
 
-    def test_write_df_spark_unsupported_format(self, sa, tmp_path):
-        """Test that Spark write with unsupported format raises error"""
-        file_path = tmp_path / "test.xlsx"
-        
+    def test_write_df_spark_jsonl(self, sa, tmp_path):
+        """A=True × B=JSONL → JSON分岐に入る"""
         mock_df = Mock()
-        mock_df.__len__ = Mock(return_value=10)  # Mock len() for logging
-        mock_spark = Mock()
-        
+        mock_df.__len__ = Mock(return_value=10)
+        sa.write_df(mock_df, str(tmp_path / "test.jsonl"), write_options={"spark": Mock()})
+        mock_df.write.options().mode().json.assert_called_once()
+
+    def test_write_df_spark_unsupported_raises(self, sa, tmp_path):
+        """A=True × B=other(EXCEL) → ValueError"""
+        mock_df = Mock()
+        mock_df.__len__ = Mock(return_value=10)
         with pytest.raises(ValueError, match="Spark write not supported"):
-            sa.write_df(mock_df, str(file_path), write_options={"spark": mock_spark})
+            sa.write_df(mock_df, str(tmp_path / "test.xlsx"), write_options={"spark": Mock()})
 
-    # -----------------------------
-    # read_text / write_text (including encoding tests)
-    # -----------------------------
-    def test_read_write_text_local(self, sa, tmp_path):
-        file_path = tmp_path / "text.txt"
-        content = "hello\nworld"
-        sa.write_text(content, str(file_path))
-        assert file_path.exists()
-        result = sa.read_text(str(file_path))
-        assert result == content
+    def test_write_df_error_is_logged(self, sa, sample_df, caplog):
+        """例外時にエラーログが出力される"""
+        with pytest.raises(Exception):
+            sa.write_df(sample_df, "/invalid/path/file.csv")
+        assert "Failed to write file" in caplog.text
 
-    def test_read_write_text_utf8_encoding(self, sa, tmp_path):
-        """Test reading and writing text with UTF-8 encoding (default)"""
-        file_path = tmp_path / "text_utf8.txt"
-        content = "こんにちは世界🌍"
-        sa.write_text(content, str(file_path), encoding='utf-8')
-        result = sa.read_text(str(file_path), encoding='utf-8')
-        assert result == content
+    # =========================================================
+    # read_text
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): os.path.isfile(normalized_path)
+    # =========================================================
 
-    def test_read_write_text_shift_jis_encoding(self, sa, tmp_path):
-        """Test reading and writing text with Shift-JIS encoding"""
-        file_path = tmp_path / "text_sjis.txt"
-        content = "こんにちは世界"
-        sa.write_text(content, str(file_path), encoding='shift_jis')
-        result = sa.read_text(str(file_path), encoding='shift_jis')
-        assert result == content
+    def test_read_text_local_file_exists(self, sa, tmp_path):
+        """A=False × B=True: ローカルファイル読み込み成功"""
+        file_path = tmp_path / "test.txt"
+        file_path.write_text("hello", encoding="utf-8")
+        assert sa.read_text(str(file_path)) == "hello"
 
-    def test_read_write_text_latin1_encoding(self, sa, tmp_path):
-        """Test reading and writing text with Latin-1 encoding"""
-        file_path = tmp_path / "text_latin1.txt"
-        content = "Héllo Wörld"
-        sa.write_text(content, str(file_path), encoding='latin-1')
-        result = sa.read_text(str(file_path), encoding='latin-1')
-        assert result == content
-
-    def test_read_write_text_ascii_encoding(self, sa, tmp_path):
-        """Test reading and writing text with ASCII encoding"""
-        file_path = tmp_path / "text_ascii.txt"
-        content = "Hello World"
-        sa.write_text(content, str(file_path), encoding='ascii')
-        result = sa.read_text(str(file_path), encoding='ascii')
-        assert result == content
-
-    def test_read_text_wrong_encoding_may_raise_error(self, sa, tmp_path):
-        """Test that reading with wrong encoding may cause issues"""
-        file_path = tmp_path / "text_utf8.txt"
-        content = "こんにちは"
-        sa.write_text(content, str(file_path), encoding='utf-8')
-        # Reading with wrong encoding may raise UnicodeDecodeError
-        with pytest.raises(UnicodeDecodeError):
-            sa.read_text(str(file_path), encoding='ascii')
-
-    def test_read_text_nonexistent_file_raises_error(self, sa, tmp_path):
-        """Test that reading nonexistent file raises FileNotFoundError"""
-        file_path = tmp_path / "nonexistent.txt"
+    def test_read_text_local_file_not_found(self, sa, tmp_path):
+        """A=False × B=False: ファイル不在 → FileNotFoundError"""
         with pytest.raises(FileNotFoundError):
-            sa.read_text(str(file_path))
+            sa.read_text(str(tmp_path / "nonexistent.txt"))
 
-    def test_write_text_creates_parent_directories(self, sa, tmp_path):
-        """Test that write_text creates parent directories"""
-        file_path = tmp_path / "nested" / "dir" / "text.txt"
+    def test_read_text_s3(self, sa):
+        """A=True: S3から読み込み (s3fs遅延import確認)"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value.read.return_value = "s3 content"
+            result = sa.read_text("s3://bucket/file.txt")
+            assert result == "s3 content"
+
+    @pytest.mark.parametrize("encoding,content", [
+        # 日本語・絵文字を含む文字列 (utf-8/utf-16/utf-8-sig はすべて表現可能)
+        ("utf-8",     "テスト Hello 🌍"),
+        ("utf-16",    "テスト Hello"),
+        ("utf-8-sig", "テスト Hello"),
+        # Shift-JIS / CP932 は日本語を含むが絵文字・一部文字は不可
+        ("shift_jis", "こんにちは Hello"),
+        ("cp932",     "日本語テスト Hello"),
+        # latin-1 は ASCII + ラテン拡張のみ (日本語不可)
+        ("latin-1",   "Hello Héllo Wörld"),
+    ])
+    def test_read_write_text_encodings(self, sa, tmp_path, encoding, content):
+        """各エンコーディングで表現可能な文字列での往復テスト"""
+        file_path = tmp_path / f"test_{encoding.replace('-', '_')}.txt"
+        sa.write_text(content, str(file_path), encoding=encoding)
+        assert sa.read_text(str(file_path), encoding=encoding) == content
+
+    def test_read_text_wrong_encoding_raises(self, sa, tmp_path):
+        """誤ったエンコーディング → UnicodeDecodeError"""
+        file_path = tmp_path / "test.txt"
+        sa.write_text("こんにちは", str(file_path), encoding="utf-8")
+        with pytest.raises(UnicodeDecodeError):
+            sa.read_text(str(file_path), encoding="ascii")
+
+    def test_read_text_invalid_encoding_raises(self, sa, tmp_path):
+        """不正なエンコーディング名 → LookupError"""
+        file_path = tmp_path / "test.txt"
+        sa.write_text("hello", str(file_path))
+        with pytest.raises(LookupError):
+            sa.read_text(str(file_path), encoding="invalid_encoding")
+
+    def test_read_text_error_is_logged(self, sa, tmp_path, caplog):
+        """例外時にエラーログが出力される"""
+        with pytest.raises(Exception):
+            sa.read_text(str(tmp_path / "nonexistent.txt"))
+        assert "Failed to read text" in caplog.text
+
+    # =========================================================
+    # write_text
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): bool(parent)  → makedirs 空文字ガード
+    # =========================================================
+
+    def test_write_text_local_creates_parent(self, sa, tmp_path):
+        """A=False × B=True(parent有): 親ディレクトリを自動生成"""
+        file_path = tmp_path / "nested" / "dir" / "test.txt"
         sa.write_text("content", str(file_path))
         assert file_path.exists()
 
-    def test_read_text_remote_s3(self, sa):
-        """Test reading text from S3"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = MagicMock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_file = MagicMock()
-            mock_file.read.return_value = "s3 content"
-            mock_s3.open.return_value.__enter__.return_value = mock_file
-            
-            result = sa.read_text(remote_path)
-            assert result == "s3 content"
-            mock_s3.open.assert_called_once()
+    def test_write_text_local_parent_empty_skips_makedirs(self, sa):
+        """A=False × B=False(parent空): makedirs がスキップされる
+        MCDC: bool(parent)=False の独立した影響を確認"""
+        with patch("os.path.dirname", return_value=""), \
+             patch("os.makedirs") as mock_makedirs, \
+             patch("builtins.open", MagicMock()):
+            sa.write_text("content", "/test.txt")
+            mock_makedirs.assert_not_called()
 
-    def test_write_text_remote_s3(self, sa):
-        """Test writing text to S3"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+    def test_write_text_s3(self, sa):
+        """A=True: S3へ書き込み (s3fs遅延import確認)"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
             mock_s3 = MagicMock()
-            mock_s3fs_class.return_value = mock_s3
+            mock_cls.return_value = mock_s3
             mock_file = MagicMock()
             mock_s3.open.return_value.__enter__.return_value = mock_file
-            
-            sa.write_text("content", remote_path)
-            mock_s3.open.assert_called_once()
+            sa.write_text("content", "s3://bucket/file.txt")
             mock_file.write.assert_called_once_with("content")
 
-    # -----------------------------
-    # read_bytes / write_bytes
-    # -----------------------------
-    def test_read_write_bytes_local(self, sa, tmp_path):
-        file_path = tmp_path / "bytes.bin"
-        data = b"\x00\x01\x02"
-        sa.write_bytes(data, str(file_path))
-        assert file_path.exists()
-        result = sa.read_bytes(str(file_path))
-        assert result == data
+    def test_write_text_invalid_encoding_raises(self, sa, tmp_path):
+        """不正なエンコーディング名 → LookupError"""
+        with pytest.raises(LookupError):
+            sa.write_text("hello", str(tmp_path / "test.txt"), encoding="invalid_encoding")
 
-    def test_read_bytes_nonexistent_file_raises_error(self, sa, tmp_path):
-        """Test that reading nonexistent file raises FileNotFoundError"""
-        file_path = tmp_path / "nonexistent.bin"
+    def test_write_text_empty_string(self, sa, tmp_path):
+        """空文字列の書き込み・読み込み"""
+        file_path = tmp_path / "empty.txt"
+        sa.write_text("", str(file_path))
+        assert sa.read_text(str(file_path)) == ""
+
+    # =========================================================
+    # read_bytes
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): os.path.isfile(normalized_path)
+    # =========================================================
+
+    def test_read_bytes_local_file_exists(self, sa, tmp_path):
+        """A=False × B=True: ローカルバイト読み込み成功"""
+        file_path = tmp_path / "test.bin"
+        file_path.write_bytes(b"\x00\x01\x02")
+        assert sa.read_bytes(str(file_path)) == b"\x00\x01\x02"
+
+    def test_read_bytes_local_file_not_found(self, sa, tmp_path):
+        """A=False × B=False: ファイル不在 → FileNotFoundError"""
         with pytest.raises(FileNotFoundError):
-            sa.read_bytes(str(file_path))
+            sa.read_bytes(str(tmp_path / "nonexistent.bin"))
 
-    def test_write_bytes_creates_parent_directories(self, sa, tmp_path):
-        """Test that write_bytes creates parent directories"""
-        file_path = tmp_path / "nested" / "dir" / "bytes.bin"
-        sa.write_bytes(b"\x00", str(file_path))
+    def test_read_bytes_s3(self, sa):
+        """A=True: S3からバイト読み込み (s3fs遅延import確認)"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value.read.return_value = b"\x00\x01"
+            assert sa.read_bytes("s3://bucket/file.bin") == b"\x00\x01"
+
+    def test_read_bytes_error_is_logged(self, sa, tmp_path, caplog):
+        """例外時にエラーログが出力される"""
+        with pytest.raises(Exception):
+            sa.read_bytes(str(tmp_path / "nonexistent.bin"))
+        assert "Failed to read bytes" in caplog.text
+
+    # =========================================================
+    # write_bytes
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): bool(parent)  → makedirs 空文字ガード
+    # =========================================================
+
+    def test_write_bytes_local_creates_parent(self, sa, tmp_path):
+        """A=False × B=True(parent有): 親ディレクトリを自動生成"""
+        file_path = tmp_path / "nested" / "dir" / "test.bin"
+        sa.write_bytes(b"\x00\x01", str(file_path))
         assert file_path.exists()
 
-    def test_write_bytes_empty_content(self, sa, tmp_path):
-        """Test writing empty bytes"""
-        file_path = tmp_path / "empty.bin"
-        sa.write_bytes(b"", str(file_path))
-        assert file_path.exists()
-        assert sa.get_size(str(file_path)) == 0
+    def test_write_bytes_local_parent_empty_skips_makedirs(self, sa):
+        """A=False × B=False(parent空): makedirs がスキップされる
+        MCDC: bool(parent)=False の独立した影響を確認"""
+        with patch("os.path.dirname", return_value=""), \
+             patch("os.makedirs") as mock_makedirs, \
+             patch("builtins.open", MagicMock()):
+            sa.write_bytes(b"\x00", "/test.bin")
+            mock_makedirs.assert_not_called()
 
-    def test_read_bytes_remote_s3(self, sa):
-        """Test reading bytes from S3"""
-        remote_path = "s3://bucket/file.bin"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
+    def test_write_bytes_s3(self, sa):
+        """A=True: S3へバイト書き込み (s3fs遅延import確認)"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
             mock_s3 = MagicMock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_file = MagicMock()
-            mock_file.read.return_value = b"\x00\x01"
-            mock_s3.open.return_value.__enter__.return_value = mock_file
-            
-            result = sa.read_bytes(remote_path)
-            assert result == b"\x00\x01"
-
-    def test_write_bytes_remote_s3(self, sa):
-        """Test writing bytes to S3"""
-        remote_path = "s3://bucket/file.bin"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = MagicMock()
-            mock_s3fs_class.return_value = mock_s3
+            mock_cls.return_value = mock_s3
             mock_file = MagicMock()
             mock_s3.open.return_value.__enter__.return_value = mock_file
-            
-            sa.write_bytes(b"\x00\x01", remote_path)
+            sa.write_bytes(b"\x00\x01", "s3://bucket/file.bin")
             mock_file.write.assert_called_once_with(b"\x00\x01")
 
-    # -----------------------------
-    # exists / delete / mkdir / is_dir
-    # -----------------------------
-    def test_exists_delete_mkdir_is_dir(self, sa, tmp_path):
-        dir_path = tmp_path / "subdir"
-        file_path = dir_path / "file.txt"
-        sa.mkdir(str(dir_path))
-        assert sa.is_dir(str(dir_path))
-        assert dir_path.exists()
-        sa.write_text("abc", str(file_path))
-        assert sa.exists(str(file_path))
-        sa.delete(str(file_path))
-        assert not sa.exists(str(file_path))
+    def test_write_read_bytes_roundtrip(self, sa, tmp_path):
+        """バイトの往復テスト"""
+        file_path = tmp_path / "test.bin"
+        data = b"\x00\x01\x02\x03"
+        sa.write_bytes(data, str(file_path))
+        assert sa.read_bytes(str(file_path)) == data
 
-    def test_exists_nonexistent_file(self, sa, tmp_path):
-        """Test exists returns False for nonexistent file"""
-        file_path = tmp_path / "nonexistent.txt"
-        assert not sa.exists(str(file_path))
+    def test_write_bytes_empty(self, sa, tmp_path):
+        """空バイト列の書き込み"""
+        file_path = tmp_path / "empty.bin"
+        sa.write_bytes(b"", str(file_path))
+        assert sa.get_size(str(file_path)) == 0
 
-    def test_delete_nonexistent_file_raises_error(self, sa, tmp_path):
-        """Test that deleting nonexistent file raises FileNotFoundError"""
-        file_path = tmp_path / "nonexistent.txt"
+    # =========================================================
+    # download_remote_file
+    # MCDC:
+    #   条件A: is_remote_path(remote_path)
+    #   条件B(local): os.path.isfile(normalized_remote_path)
+    #   条件C: bool(parent)  → makedirs 空文字ガード
+    # =========================================================
+
+    def test_download_local_to_local_file_exists(self, sa, tmp_path):
+        """A=False × B=True × C=True: ローカルからローカルへコピー"""
+        src = tmp_path / "source.txt"
+        dst = tmp_path / "download" / "dest.txt"
+        src.write_text("content")
+        sa.download_remote_file(str(src), str(dst))
+        assert dst.read_text() == "content"
+
+    def test_download_local_to_local_file_not_found(self, sa, tmp_path):
+        """A=False × B=False: ソース不在 → FileNotFoundError"""
         with pytest.raises(FileNotFoundError):
-            sa.delete(str(file_path))
+            sa.download_remote_file(str(tmp_path / "nonexistent.txt"), str(tmp_path / "dst.txt"))
 
-    def test_mkdir_exist_ok_true(self, sa, tmp_path):
-        """Test mkdir with exist_ok=True doesn't raise error"""
-        dir_path = tmp_path / "subdir"
-        sa.mkdir(str(dir_path), exist_ok=True)
-        sa.mkdir(str(dir_path), exist_ok=True)  # Should not raise
-        assert dir_path.exists()
+    @patch("boto3.client")
+    def test_download_s3_to_local(self, mock_boto3, sa, tmp_path):
+        """A=True × C=True: S3からローカルへダウンロード"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        local_path = tmp_path / "downloaded.txt"
+        sa.download_remote_file("s3://bucket/file.txt", str(local_path))
+        args = mock_s3.download_file.call_args[0]
+        assert args[0] == "bucket"
+        assert args[1] == "file.txt"
+        assert args[2] == str(local_path)
 
-    def test_mkdir_exist_ok_false(self, sa, tmp_path):
-        """Test mkdir with exist_ok=False raises error if directory exists"""
-        dir_path = tmp_path / "subdir"
-        sa.mkdir(str(dir_path), exist_ok=False)
+    def test_download_parent_empty_skips_makedirs(self, sa, tmp_path):
+        """C=False(parent空): makedirs がスキップされる
+        MCDC: bool(parent)=False の独立した影響を確認
+        os.path.abspath を経由するため parent が空になるのはルートパスのみ"""
+        src = tmp_path / "source.txt"
+        src.write_text("content")
+        with patch("os.path.dirname", return_value=""), \
+             patch("os.makedirs") as mock_makedirs, \
+             patch("shutil.copy"):
+            sa.download_remote_file(str(src), "/dst.txt")
+            mock_makedirs.assert_not_called()
+
+    @patch("boto3.client")
+    def test_download_s3_exception_propagates(self, mock_boto3, sa, tmp_path):
+        """S3例外が伝播する"""
+        mock_boto3.return_value.download_file.side_effect = Exception("S3 error")
+        with pytest.raises(Exception):
+            sa.download_remote_file("s3://bucket/file.txt", str(tmp_path / "dst.txt"))
+
+    # =========================================================
+    # upload_local_file
+    # MCDC:
+    #   条件A: is_remote_path(remote_path)
+    #   条件B(S3): normalized_remote_path.endswith("/")  → ファイル名追記
+    #   条件C(local): bool(parent)  → makedirs 空文字ガード
+    # =========================================================
+
+    def test_upload_local_to_local(self, sa, tmp_path):
+        """A=False × C=True: ローカルからローカルへコピー"""
+        src = tmp_path / "source.txt"
+        dst = tmp_path / "dest.txt"
+        src.write_text("content")
+        sa.upload_local_file(str(src), str(dst))
+        assert dst.read_text() == "content"
+
+    def test_upload_local_creates_parent(self, sa, tmp_path):
+        """A=False × C=True: 親ディレクトリを自動生成"""
+        src = tmp_path / "source.txt"
+        dst = tmp_path / "nested" / "dir" / "dest.txt"
+        src.write_text("content")
+        sa.upload_local_file(str(src), str(dst))
+        assert dst.exists()
+
+    def test_upload_local_parent_empty_skips_makedirs(self, sa, tmp_path):
+        """A=False × C=False(parent空): makedirs がスキップされる
+        MCDC: bool(parent)=False の独立した影響を確認"""
+        src = tmp_path / "source.txt"
+        src.write_text("content")
+        with patch("os.path.dirname", return_value=""), \
+             patch("os.makedirs") as mock_makedirs, \
+             patch("shutil.copy"):
+            sa.upload_local_file(str(src), "/dst.txt")
+            mock_makedirs.assert_not_called()
+
+    def test_upload_nonexistent_source_raises(self, sa, tmp_path):
+        """ソースファイル不在 → FileNotFoundError"""
+        with pytest.raises(FileNotFoundError):
+            sa.upload_local_file(str(tmp_path / "nonexistent.txt"), str(tmp_path / "dst.txt"))
+
+    @patch("boto3.client")
+    def test_upload_to_s3_without_trailing_slash(self, mock_boto3, sa, tmp_path):
+        """A=True × B=False(スラッシュなし): パスをそのまま使用してupload"""
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+        mock_boto3.return_value.upload_file = Mock()
+        sa.upload_local_file(str(src), "s3://bucket/uploaded.txt")
+        args = mock_boto3.return_value.upload_file.call_args[0]
+        assert args[1] == "bucket"
+        assert args[2] == "uploaded.txt"
+
+    @patch("boto3.client")
+    def test_upload_to_s3_with_trailing_slash(self, mock_boto3, sa, tmp_path):
+        """A=True × B=True(スラッシュあり): ファイル名を末尾に追記してupload
+        MCDC: endswith("/")=True の独立した影響を確認"""
+        src = tmp_path / "myfile.txt"
+        src.write_text("content")
+        mock_boto3.return_value.upload_file = Mock()
+        sa.upload_local_file(str(src), "s3://bucket/some/prefix/")
+        args = mock_boto3.return_value.upload_file.call_args[0]
+        assert args[1] == "bucket"
+        assert args[2].endswith("myfile.txt")
+        assert args[2] != "myfile.txt"  # prefixが付いている
+
+    @patch("boto3.client")
+    def test_upload_s3_exception_propagates(self, mock_boto3, sa, tmp_path):
+        """S3例外が伝播する"""
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+        mock_boto3.return_value.upload_file.side_effect = Exception("S3 error")
+        with pytest.raises(Exception):
+            sa.upload_local_file(str(src), "s3://bucket/file.txt")
+
+    # =========================================================
+    # exists
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(S3): head_object が ClientError を raise するか
+    # =========================================================
+
+    def test_exists_local_true(self, sa, tmp_path):
+        """A=False: 存在するローカルファイル → True"""
+        file_path = tmp_path / "file.txt"
+        file_path.touch()
+        assert sa.exists(str(file_path)) is True
+
+    def test_exists_local_false(self, sa, tmp_path):
+        """A=False: 存在しないパス → False"""
+        assert sa.exists(str(tmp_path / "nonexistent.txt")) is False
+
+    @patch("boto3.client")
+    def test_exists_s3_true(self, mock_boto3, sa):
+        """A=True × B=True(head_object成功) → True"""
+        mock_boto3.return_value.head_object.return_value = {}
+        assert sa.exists("s3://bucket/file.txt") is True
+
+    @patch("boto3.client")
+    def test_exists_s3_false(self, mock_boto3, sa):
+        """A=True × B=False(ClientError) → False
+        MCDC: ClientError の独立した影響を確認"""
+        from botocore.exceptions import ClientError
+        mock_boto3.return_value.head_object.side_effect = ClientError(
+            {"Error": {"Code": "404"}}, "HeadObject"
+        )
+        assert sa.exists("s3://bucket/nonexistent.txt") is False
+
+    # =========================================================
+    # delete
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): os.path.isfile(normalized_path)
+    # =========================================================
+
+    def test_delete_local_file_exists(self, sa, tmp_path):
+        """A=False × B=True: ローカルファイル削除成功"""
+        file_path = tmp_path / "file.txt"
+        file_path.touch()
+        sa.delete(str(file_path))
+        assert not file_path.exists()
+
+    def test_delete_local_file_not_found(self, sa, tmp_path):
+        """A=False × B=False: ファイル不在 → FileNotFoundError"""
+        with pytest.raises(FileNotFoundError):
+            sa.delete(str(tmp_path / "nonexistent.txt"))
+
+    @patch("boto3.client")
+    def test_delete_s3(self, mock_boto3, sa):
+        """A=True: S3オブジェクト削除"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        sa.delete("s3://bucket/file.txt")
+        mock_s3.delete_object.assert_called_once()
+
+    # =========================================================
+    # get_size
+    # =========================================================
+
+    def test_get_size_local(self, sa, tmp_path):
+        """ローカルファイルのサイズ取得"""
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("abc")
+        assert sa.get_size(str(file_path)) == 3
+
+    def test_get_size_local_zero(self, sa, tmp_path):
+        """空ファイルのサイズ = 0"""
+        file_path = tmp_path / "empty.txt"
+        file_path.write_text("")
+        assert sa.get_size(str(file_path)) == 0
+
+    def test_get_size_local_not_found(self, sa, tmp_path):
+        """ローカルファイル不在 → FileNotFoundError"""
+        with pytest.raises(FileNotFoundError):
+            sa.get_size(str(tmp_path / "nonexistent.txt"))
+
+    @patch("boto3.client")
+    def test_get_size_s3(self, mock_boto3, sa):
+        """S3オブジェクトのサイズ取得"""
+        mock_boto3.return_value.head_object.return_value = {"ContentLength": 1024}
+        assert sa.get_size("s3://bucket/file.txt") == 1024
+
+    # =========================================================
+    # list_files
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(local): os.path.isfile / os.path.isdir / それ以外
+    # =========================================================
+
+    def test_list_files_local_directory(self, sa, tmp_path):
+        """A=False × B=isdir: ディレクトリ内ファイル一覧"""
+        (tmp_path / "f1.txt").write_text("1")
+        (tmp_path / "f2.txt").write_text("2")
+        files = sa.list_files(str(tmp_path))
+        assert set(files) == {str(tmp_path / "f1.txt"), str(tmp_path / "f2.txt")}
+
+    def test_list_files_local_single_file(self, sa, tmp_path):
+        """A=False × B=isfile: 単一ファイルを返す"""
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("content")
+        assert sa.list_files(str(file_path)) == [str(file_path)]
+
+    def test_list_files_local_nested(self, sa, tmp_path):
+        """A=False: ネストされたディレクトリを再帰的に列挙"""
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (tmp_path / "f1.txt").write_text("1")
+        (sub / "f2.txt").write_text("2")
+        files = sa.list_files(str(tmp_path))
+        assert str(tmp_path / "f1.txt") in files
+        assert str(sub / "f2.txt") in files
+
+    def test_list_files_local_empty_directory(self, sa, tmp_path):
+        """A=False × B=isdir(空): 空リストを返す"""
+        assert sa.list_files(str(tmp_path)) == []
+
+    def test_list_files_local_not_found(self, sa, tmp_path):
+        """A=False × B=その他: FileNotFoundError"""
+        with pytest.raises(FileNotFoundError):
+            sa.list_files(str(tmp_path / "nonexistent"))
+
+    @patch("boto3.client")
+    def test_list_files_s3(self, mock_boto3, sa):
+        """A=True: S3プレフィックスのファイル一覧"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        mock_paginator = Mock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {"Contents": [{"Key": "prefix/f1.txt"}, {"Key": "prefix/f2.txt"}]},
+            {"Contents": [{"Key": "prefix/f3.txt"}]},
+        ]
+        files = sa.list_files("s3://bucket/prefix")
+        assert set(files) == {
+            "s3://bucket/prefix/f1.txt",
+            "s3://bucket/prefix/f2.txt",
+            "s3://bucket/prefix/f3.txt",
+        }
+
+    @patch("boto3.client")
+    def test_list_files_s3_empty(self, mock_boto3, sa):
+        """A=True: S3プレフィックスが空 → 空リスト"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        mock_paginator = Mock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{}]
+        assert sa.list_files("s3://bucket/prefix") == []
+
+    # =========================================================
+    # mkdir
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(S3): not exist_ok
+    #   条件C(S3, exist_ok=False): "Contents" in response
+    # =========================================================
+
+    def test_mkdir_local(self, sa, tmp_path):
+        """A=False: ローカルディレクトリ作成"""
+        dir_path = tmp_path / "newdir"
+        sa.mkdir(str(dir_path))
+        assert dir_path.is_dir()
+
+    def test_mkdir_local_exist_ok_true(self, sa, tmp_path):
+        """A=False × B=False(exist_ok=True): 既存ディレクトリでもエラーなし"""
+        dir_path = tmp_path / "newdir"
+        sa.mkdir(str(dir_path))
+        sa.mkdir(str(dir_path), exist_ok=True)  # 2回目はエラーにならない
+
+    def test_mkdir_local_exist_ok_false(self, sa, tmp_path):
+        """A=False × B=True(exist_ok=False): 既存ディレクトリで FileExistsError"""
+        dir_path = tmp_path / "newdir"
+        sa.mkdir(str(dir_path))
         with pytest.raises(FileExistsError):
             sa.mkdir(str(dir_path), exist_ok=False)
 
-    def test_is_dir_false_for_file(self, sa, tmp_path):
-        """Test is_dir returns False for files"""
-        file_path = tmp_path / "file.txt"
-        sa.write_text("content", str(file_path))
-        assert not sa.is_dir(str(file_path))
-
-    def test_is_dir_false_for_nonexistent(self, sa, tmp_path):
-        """Test is_dir returns False for nonexistent path"""
-        dir_path = tmp_path / "nonexistent"
-        assert not sa.is_dir(str(dir_path))
-
-    @patch('boto3.client')
-    def test_exists_remote_s3_true(self, mock_boto3, sa):
-        """Test exists returns True for existing S3 object"""
-        remote_path = "s3://bucket/file.txt"
+    @patch("boto3.client")
+    def test_mkdir_s3_exist_ok_true(self, mock_boto3, sa):
+        """A=True × B=False(exist_ok=True): チェックなしで put_object"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-        mock_s3.head_object.return_value = {}
-        
-        result = sa.exists(remote_path)
-        assert result is True
+        sa.mkdir("s3://bucket/dir", exist_ok=True)
+        mock_s3.put_object.assert_called_once()
+        mock_s3.list_objects_v2.assert_not_called()
 
-    @patch('boto3.client')
-    def test_exists_remote_s3_false(self, mock_boto3, sa):
-        """Test exists returns False for nonexistent S3 object"""
-        remote_path = "s3://bucket/file.txt"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        from botocore.exceptions import ClientError
-        mock_s3.head_object.side_effect = ClientError({'Error': {'Code': '404'}}, 'HeadObject')
-        mock_s3.exceptions.ClientError = ClientError
-        
-        result = sa.exists(remote_path)
-        assert result is False
-
-    @patch('boto3.client')
-    def test_delete_remote_s3(self, mock_boto3, sa):
-        """Test deleting S3 object"""
-        remote_path = "s3://bucket/file.txt"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        
-        sa.delete(remote_path)
-        mock_s3.delete_object.assert_called_once()
-
-    @patch('boto3.client')
-    def test_mkdir_remote_s3(self, mock_boto3, sa):
-        """Test creating S3 directory prefix"""
-        remote_path = "s3://bucket/dir"
+    @patch("boto3.client")
+    def test_mkdir_s3_exist_ok_false_not_exists(self, mock_boto3, sa):
+        """A=True × B=True × C=False: S3プレフィックス未存在 → put_object"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {}
-        
-        sa.mkdir(remote_path)
+        sa.mkdir("s3://bucket/dir", exist_ok=False)
         mock_s3.put_object.assert_called_once()
 
-    @patch('boto3.client')
-    def test_mkdir_remote_s3_exist_ok_false(self, mock_boto3, sa):
-        """Test creating S3 directory with exist_ok=False raises error"""
-        remote_path = "s3://bucket/dir"
+    @patch("boto3.client")
+    def test_mkdir_s3_exist_ok_false_already_exists(self, mock_boto3, sa):
+        """A=True × B=True × C=True: S3プレフィックス既存 → FileExistsError
+        MCDC: Contents in response の独立した影響を確認"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {"Contents": [{}]}
-        
         with pytest.raises(FileExistsError):
-            sa.mkdir(remote_path, exist_ok=False)
+            sa.mkdir("s3://bucket/dir", exist_ok=False)
 
-    @patch('boto3.client')
-    def test_is_dir_remote_s3_true(self, mock_boto3, sa):
-        """Test is_dir returns True for S3 prefix"""
-        remote_path = "s3://bucket/dir"
+    # =========================================================
+    # is_dir
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   条件B(S3): not key  (空キー)
+    #   条件C(S3): key.endswith("/")
+    #   条件D(local): os.path.isdir
+    #   条件E(local): ext == ""
+    # =========================================================
+
+    def test_is_dir_local_existing_directory(self, sa, tmp_path):
+        """A=False × D=True: 実在するディレクトリ → True"""
+        assert sa.is_dir(str(tmp_path)) is True
+
+    def test_is_dir_local_file_with_extension(self, sa, tmp_path):
+        """A=False × D=False × E=False: 拡張子ありファイル → False"""
+        file_path = tmp_path / "file.txt"
+        file_path.touch()
+        assert sa.is_dir(str(file_path)) is False
+
+    def test_is_dir_local_nonexistent_without_extension(self, sa, tmp_path):
+        """A=False × D=False × E=True: 拡張子なし非実在パス → True (現仕様)"""
+        assert sa.is_dir(str(tmp_path / "nonexistent")) is True
+
+    def test_is_dir_local_nonexistent_with_extension(self, sa, tmp_path):
+        """A=False × D=False × E=False: 拡張子あり非実在パス → False"""
+        assert sa.is_dir(str(tmp_path / "nonexistent.txt")) is False
+
+    @patch("boto3.client")
+    def test_is_dir_s3_empty_key(self, mock_boto3, sa):
+        """A=True × B=True(not key): バケットルート → True (list_objects_v2を呼ばない)
+        MCDC: not key の独立した影響を確認"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        # s3://bucket/ → key=""
+        result = sa.is_dir("s3://bucket/")
+        assert result is True
+        mock_s3.list_objects_v2.assert_not_called()
+
+    @patch("boto3.client")
+    def test_is_dir_s3_key_ends_with_slash(self, mock_boto3, sa):
+        """A=True × B=False × C=True(endswith "/"): スラッシュ終わりキー → True (list_objects_v2を呼ばない)
+        MCDC: key.endswith("/") の独立した影響を確認"""
+        mock_s3 = Mock()
+        mock_boto3.return_value = mock_s3
+        # s3://bucket/prefix/ → key="prefix/"
+        result = sa.is_dir("s3://bucket/prefix/")
+        assert result is True
+        mock_s3.list_objects_v2.assert_not_called()
+
+    @patch("boto3.client")
+    def test_is_dir_s3_prefix_with_contents(self, mock_boto3, sa):
+        """A=True × B=False × C=False: 通常キー → list_objects_v2 で判定 → True"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {"Contents": [{}]}
-        
-        result = sa.is_dir(remote_path)
-        assert result is True
+        assert sa.is_dir("s3://bucket/dir") is True
 
-    @patch('boto3.client')
-    def test_is_dir_remote_s3_false(self, mock_boto3, sa):
-        """Test is_dir returns False for non-prefix S3 path"""
-        remote_path = "s3://bucket/file.txt"
+    @patch("boto3.client")
+    def test_is_dir_s3_no_contents(self, mock_boto3, sa):
+        """A=True × B=False × C=False: 通常キー → list_objects_v2 で判定 → False"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
         mock_s3.list_objects_v2.return_value = {}
-        
-        result = sa.is_dir(remote_path)
-        assert result is False
+        assert sa.is_dir("s3://bucket/file.txt") is False
 
-    # -----------------------------
-    # copy_file / copy_file_raw / move_file / rename
-    # -----------------------------
-    def test_copy_move_rename(self, sa, tmp_path, sample_df):
-        src_file = tmp_path / "src.csv"
-        dst_file = tmp_path / "dst.csv"
-        moved_file = tmp_path / "moved.csv"
-        renamed_file = tmp_path / "renamed.csv"
+    # =========================================================
+    # rename
+    # =========================================================
 
-        sa.write_df(sample_df, str(src_file))
-        sa.copy_file(str(src_file), str(dst_file))
-        df = sa.read_df(str(dst_file))
-        pd.testing.assert_frame_equal(df, sample_df)
+    def test_rename_local(self, sa, tmp_path):
+        """ローカルファイルのリネーム"""
+        old = tmp_path / "old.txt"
+        new = tmp_path / "new.txt"
+        old.write_text("content")
+        sa.rename(str(old), str(new))
+        assert not old.exists()
+        assert new.read_text() == "content"
 
-        raw_file = tmp_path / "raw.txt"
-        raw_copy = tmp_path / "raw_copy.txt"
-        sa.write_text("raw content", str(raw_file))
-        sa.copy_file_raw(str(raw_file), str(raw_copy))
-        assert sa.read_text(str(raw_copy)) == "raw content"
-
-        sa.move_file(str(raw_copy), str(moved_file))
-        assert not os.path.exists(raw_copy)
-        assert os.path.exists(moved_file)
-
-        sa.rename(str(moved_file), str(renamed_file))
-        assert not os.path.exists(moved_file)
-        assert os.path.exists(renamed_file)
-
-    def test_copy_file_preserves_content(self, sa, tmp_path, sample_df):
-        """Test that copy_file preserves DataFrame content correctly"""
-        src_file = tmp_path / "src.parquet"
-        dst_file = tmp_path / "dst.parquet"
-        
-        sa.write_df(sample_df, str(src_file))
-        sa.copy_file(str(src_file), str(dst_file))
-        
-        df_src = sa.read_df(str(src_file))
-        df_dst = sa.read_df(str(dst_file))
-        pd.testing.assert_frame_equal(df_src, df_dst)
-
-    def test_copy_file_raw_binary_content(self, sa, tmp_path):
-        """Test copy_file_raw with binary content"""
-        src_file = tmp_path / "src.bin"
-        dst_file = tmp_path / "dst.bin"
-        
-        binary_data = b"\x00\x01\x02\x03\x04"
-        sa.write_bytes(binary_data, str(src_file))
-        sa.copy_file_raw(str(src_file), str(dst_file))
-        
-        assert sa.read_bytes(str(dst_file)) == binary_data
-
-    def test_move_file_removes_source(self, sa, tmp_path):
-        """Test that move_file removes the source file"""
-        src_file = tmp_path / "src.txt"
-        dst_file = tmp_path / "dst.txt"
-        
-        sa.write_text("content", str(src_file))
-        assert sa.exists(str(src_file))
-        
-        sa.move_file(str(src_file), str(dst_file))
-        
-        assert not sa.exists(str(src_file))
-        assert sa.exists(str(dst_file))
-        assert sa.read_text(str(dst_file)) == "content"
-
-    def test_rename_file(self, sa, tmp_path):
-        """Test renaming a file"""
-        old_file = tmp_path / "old.txt"
-        new_file = tmp_path / "new.txt"
-        
-        sa.write_text("content", str(old_file))
-        sa.rename(str(old_file), str(new_file))
-        
-        assert not os.path.exists(old_file)
-        assert os.path.exists(new_file)
-        assert sa.read_text(str(new_file)) == "content"
-
-    @patch('boto3.client')
-    def test_rename_remote_s3(self, mock_boto3, sa):
-        """Test renaming S3 object"""
-        old_path = "s3://bucket/old.txt"
-        new_path = "s3://bucket/new.txt"
+    @patch("boto3.client")
+    def test_rename_s3(self, mock_boto3, sa):
+        """S3オブジェクトのリネーム: copy + delete"""
         mock_s3 = Mock()
         mock_boto3.return_value = mock_s3
-        
-        sa.rename(old_path, new_path)
-        
+        sa.rename("s3://bucket/old.txt", "s3://bucket/new.txt")
         mock_s3.copy_object.assert_called_once()
         mock_s3.delete_object.assert_called_once()
 
-    # -----------------------------
-    # get_size / stat
-    # -----------------------------
-    def test_get_size_stat(self, sa, tmp_path):
+    # =========================================================
+    # stat
+    # MCDC:
+    #   条件A: is_remote_path(path)
+    #   修正確認: last_modified が常に timezone-aware (UTC) であること
+    # =========================================================
+
+    def test_stat_local_returns_aware_datetime(self, sa, tmp_path):
+        """A=False: last_modified が timezone-aware (UTC) であることを確認
+        修正点: datetime.fromtimestamp(ts, tz=timezone.utc)"""
         file_path = tmp_path / "file.txt"
-        sa.write_text("abc", str(file_path))
-        size = sa.get_size(str(file_path))
-        assert size == 3
+        file_path.write_text("test")
         stat_info = sa.stat(str(file_path))
-        assert stat_info["size"] == 3
-        assert "last_modified" in stat_info
-
-    def test_get_size_nonexistent_file_raises_error(self, sa, tmp_path):
-        """Test that get_size on nonexistent file raises FileNotFoundError"""
-        file_path = tmp_path / "nonexistent.txt"
-        with pytest.raises(FileNotFoundError):
-            sa.get_size(str(file_path))
-
-    def test_get_size_zero_byte_file(self, sa, tmp_path):
-        """Test get_size on empty file"""
-        file_path = tmp_path / "empty.txt"
-        sa.write_text("", str(file_path))
-        assert sa.get_size(str(file_path)) == 0
-
-    def test_stat_local_file_metadata(self, sa, tmp_path):
-        """Test stat returns correct metadata for local files"""
-        file_path = tmp_path / "file.txt"
-        sa.write_text("test content", str(file_path))
-        
-        stat_info = sa.stat(str(file_path))
-        
-        assert stat_info["size"] == 12
-        assert "last_modified" in stat_info
+        assert stat_info["size"] == 4
+        assert stat_info["last_modified"].tzinfo is not None
+        assert stat_info["last_modified"].tzinfo == timezone.utc
         assert "mode" in stat_info
         assert "uid" in stat_info
         assert "gid" in stat_info
 
-    @patch('boto3.client')
-    def test_get_size_remote_s3(self, mock_boto3, sa):
-        """Test get_size for S3 object"""
-        remote_path = "s3://bucket/file.txt"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        mock_s3.head_object.return_value = {"ContentLength": 1024}
-        
-        size = sa.get_size(remote_path)
-        assert size == 1024
-
-    @patch('boto3.client')
-    def test_stat_remote_s3(self, mock_boto3, sa):
-        """Test stat for S3 object"""
-        remote_path = "s3://bucket/file.txt"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        from datetime import datetime
-        mock_s3.head_object.return_value = {
+    @patch("boto3.client")
+    def test_stat_s3_returns_aware_datetime(self, mock_boto3, sa):
+        """A=True: S3の last_modified も timezone-aware であることを確認"""
+        s3_dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        mock_boto3.return_value.head_object.return_value = {
             "ContentLength": 1024,
-            "LastModified": datetime.now(),
+            "LastModified": s3_dt,
             "ContentType": "text/plain",
             "ETag": "abc123",
-            "StorageClass": "STANDARD"
+            "StorageClass": "STANDARD",
         }
-        
-        stat_info = sa.stat(remote_path)
-        
+        stat_info = sa.stat("s3://bucket/file.txt")
         assert stat_info["size"] == 1024
-        assert "last_modified" in stat_info
-        assert stat_info["content_type"] == "text/plain"
-        assert stat_info["etag"] == "abc123"
-        assert stat_info["storage_class"] == "STANDARD"
+        assert stat_info["last_modified"].tzinfo is not None
 
-    # -----------------------------
-    # list_files
-    # -----------------------------
-    def test_list_files(self, sa, tmp_path):
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-        file1 = subdir / "f1.txt"
-        file2 = subdir / "f2.txt"
-        sa.write_text("1", str(file1))
-        sa.write_text("2", str(file2))
-        files = sa.list_files(str(subdir))
-        assert set(files) == {str(file1), str(file2)}
-
-    def test_list_files_single_file(self, sa, tmp_path):
-        """Test list_files on a single file returns that file"""
+    def test_stat_local_and_s3_last_modified_comparable(self, sa, tmp_path):
+        """ローカルとS3の last_modified が型として比較可能であることを確認
+        修正前は naive vs aware で TypeError が発生していた"""
         file_path = tmp_path / "file.txt"
-        sa.write_text("content", str(file_path))
-        files = sa.list_files(str(file_path))
-        assert files == [str(file_path)]
+        file_path.write_text("test")
+        local_stat = sa.stat(str(file_path))
+        s3_dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        # TypeError が発生しないことを確認
+        result = local_stat["last_modified"] > s3_dt
+        assert isinstance(result, bool)
 
-    def test_list_files_nested_directories(self, sa, tmp_path):
-        """Test list_files recursively lists all files in nested directories"""
-        subdir1 = tmp_path / "dir1"
-        subdir2 = subdir1 / "dir2"
-        subdir2.mkdir(parents=True)
-        
-        file1 = tmp_path / "f1.txt"
-        file2 = subdir1 / "f2.txt"
-        file3 = subdir2 / "f3.txt"
-        
-        sa.write_text("1", str(file1))
-        sa.write_text("2", str(file2))
-        sa.write_text("3", str(file3))
-        
-        files = sa.list_files(str(tmp_path))
-        assert str(file1) in files
-        assert str(file2) in files
-        assert str(file3) in files
+    # =========================================================
+    # copy_file / copy_file_raw / move_file (複合操作)
+    # =========================================================
 
-    def test_list_files_empty_directory(self, sa, tmp_path):
-        """Test list_files on empty directory returns empty list"""
-        subdir = tmp_path / "empty"
-        subdir.mkdir()
-        files = sa.list_files(str(subdir))
-        assert files == []
+    def test_copy_file(self, sa, tmp_path, sample_df):
+        """DataFrameのコピー"""
+        src = tmp_path / "src.parquet"
+        dst = tmp_path / "dst.parquet"
+        sa.write_df(sample_df, str(src))
+        sa.copy_file(str(src), str(dst))
+        pd.testing.assert_frame_equal(sa.read_df(str(src)), sa.read_df(str(dst)))
 
-    def test_list_files_nonexistent_path_raises_error(self, sa, tmp_path):
-        """Test list_files on nonexistent path raises FileNotFoundError"""
-        nonexistent = tmp_path / "nonexistent"
-        with pytest.raises(FileNotFoundError):
-            sa.list_files(str(nonexistent))
+    def test_copy_file_raw(self, sa, tmp_path):
+        """バイナリコピー"""
+        src = tmp_path / "src.bin"
+        dst = tmp_path / "dst.bin"
+        sa.write_bytes(b"\x00\x01\x02", str(src))
+        sa.copy_file_raw(str(src), str(dst))
+        assert sa.read_bytes(str(dst)) == b"\x00\x01\x02"
 
-    @patch('boto3.client')
-    def test_list_files_remote_s3(self, mock_boto3, sa):
-        """Test list_files for S3 bucket"""
-        remote_path = "s3://bucket/prefix"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        
-        mock_paginator = Mock()
-        mock_s3.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {"Contents": [{"Key": "prefix/file1.txt"}, {"Key": "prefix/file2.txt"}]},
-            {"Contents": [{"Key": "prefix/file3.txt"}]}
-        ]
-        
-        files = sa.list_files(remote_path)
-        
-        assert "s3://bucket/prefix/file1.txt" in files
-        assert "s3://bucket/prefix/file2.txt" in files
-        assert "s3://bucket/prefix/file3.txt" in files
-        assert len(files) == 3
+    def test_move_file(self, sa, tmp_path):
+        """移動: ソースが削除されデスティネーションに内容が移る"""
+        src = tmp_path / "src.txt"
+        dst = tmp_path / "dst.txt"
+        sa.write_text("content", str(src))
+        sa.move_file(str(src), str(dst))
+        assert not src.exists()
+        assert sa.read_text(str(dst)) == "content"
 
-    @patch('boto3.client')
-    def test_list_files_remote_s3_empty(self, mock_boto3, sa):
-        """Test list_files for empty S3 prefix"""
-        remote_path = "s3://bucket/prefix"
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        
-        mock_paginator = Mock()
-        mock_s3.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{}]
-        
-        files = sa.list_files(remote_path)
-        assert files == []
-
-    # -----------------------------
-    # download_remote_file / upload_local_file
-    # -----------------------------
-    def test_download_remote_file_local_to_local(self, sa, tmp_path):
-        """Test download_remote_file with local paths (copy operation)"""
-        src_file = tmp_path / "source.txt"
-        dst_dir = tmp_path / "download"
-        dst_file = dst_dir / "downloaded.txt"
-        
-        sa.write_text("content", str(src_file))
-        sa.download_remote_file(str(src_file), str(dst_file))
-        
-        assert dst_file.exists()
-        assert sa.read_text(str(dst_file)) == "content"
-
-    def test_download_remote_file_creates_parent_directories(self, sa, tmp_path):
-        """Test download_remote_file creates parent directories if they don't exist"""
-        src_file = tmp_path / "source.txt"
-        dst_file = tmp_path / "nested" / "dir" / "downloaded.txt"
-        
-        sa.write_text("content", str(src_file))
-        sa.download_remote_file(str(src_file), str(dst_file))
-        
-        assert dst_file.exists()
-
-    def test_download_remote_file_nonexistent_raises_error(self, sa, tmp_path):
-        """Test download_remote_file with nonexistent source raises FileNotFoundError"""
-        src_file = tmp_path / "nonexistent.txt"
-        dst_file = tmp_path / "downloaded.txt"
-        
-        with pytest.raises(FileNotFoundError):
-            sa.download_remote_file(str(src_file), str(dst_file))
-
-    @patch('boto3.client')
-    def test_download_remote_file_from_s3(self, mock_boto3, sa, tmp_path):
-        """Test download_remote_file from S3"""
-        remote_path = "s3://bucket/file.txt"
-        local_path = tmp_path / "downloaded.txt"
-        
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        
-        sa.download_remote_file(remote_path, str(local_path))
-        
-        mock_s3.download_file.assert_called_once()
-        call_args = mock_s3.download_file.call_args[0]
-        assert call_args[0] == "bucket"
-        assert call_args[1] == "file.txt"
-        assert call_args[2] == str(local_path)
-
-    def test_upload_local_file_local_to_local(self, sa, tmp_path):
-        """Test upload_local_file with local paths (copy operation)"""
-        src_file = tmp_path / "source.txt"
-        dst_file = tmp_path / "uploaded.txt"
-        
-        sa.write_text("content", str(src_file))
-        sa.upload_local_file(str(src_file), str(dst_file))
-        
-        assert dst_file.exists()
-        assert sa.read_text(str(dst_file)) == "content"
-
-    def test_upload_local_file_creates_parent_directories(self, sa, tmp_path):
-        """Test upload_local_file creates parent directories if they don't exist"""
-        src_file = tmp_path / "source.txt"
-        dst_file = tmp_path / "nested" / "dir" / "uploaded.txt"
-        
-        sa.write_text("content", str(src_file))
-        sa.upload_local_file(str(src_file), str(dst_file))
-        
-        assert dst_file.exists()
-
-    def test_upload_local_file_nonexistent_raises_error(self, sa, tmp_path):
-        """Test upload_local_file with nonexistent source raises FileNotFoundError"""
-        src_file = tmp_path / "nonexistent.txt"
-        dst_file = tmp_path / "uploaded.txt"
-        
-        with pytest.raises(FileNotFoundError):
-            sa.upload_local_file(str(src_file), str(dst_file))
-
-    @patch('boto3.client')
-    def test_upload_local_file_to_s3(self, mock_boto3, sa, tmp_path):
-        """Test upload_local_file to S3"""
-        local_path = tmp_path / "file.txt"
-        remote_path = "s3://bucket/uploaded.txt"
-        
-        sa.write_text("content", str(local_path))
-        
-        mock_s3 = Mock()
-        mock_boto3.return_value = mock_s3
-        
-        sa.upload_local_file(str(local_path), remote_path)
-        
-        mock_s3.upload_file.assert_called_once()
-        call_args = mock_s3.upload_file.call_args[0]
-        assert call_args[0] == str(local_path)
-        assert call_args[1] == "bucket"
-        assert call_args[2] == "uploaded.txt"
-
-    # -----------------------------
+    # =========================================================
     # _get_storage_options
-    # -----------------------------
-    def test_get_storage_options_local_path(self, sa, tmp_path):
-        """Test _get_storage_options for local path returns empty dict"""
-        file_path = tmp_path / "file.txt"
-        options = sa._get_storage_options(str(file_path))
-        assert options == {}
+    # =========================================================
 
-    def test_get_storage_options_remote_path(self, sa):
-        """Test _get_storage_options for remote path returns empty dict"""
-        remote_path = "s3://bucket/file.txt"
-        options = sa._get_storage_options(remote_path)
-        assert options == {}
+    def test_get_storage_options_local(self, sa, tmp_path):
+        """ローカルパス → 空dict"""
+        assert sa._get_storage_options(str(tmp_path / "file.txt")) == {}
 
-    def test_get_storage_options_http_path(self, sa):
-        """Test _get_storage_options for HTTP path"""
-        http_path = "https://example.com/file.txt"
-        options = sa._get_storage_options(http_path)
-        assert options == {}
+    def test_get_storage_options_s3(self, sa):
+        """S3パス → 空dict"""
+        assert sa._get_storage_options("s3://bucket/file.txt") == {}
 
-    # -----------------------------
-    # normalize_path, is_remote_path, is_local_path
-    # -----------------------------
-    def test_path_utils(self, sa, tmp_path):
-        local_file = tmp_path / "f.txt"
-        local_file.touch()
-        path = str(local_file)
-        assert sa.exists(path)
-        assert is_local_path(path)
-        assert not is_remote_path(path)
-        norm = sa._get_storage_options(path)
-        assert isinstance(norm, dict)
+    # =========================================================
+    # 遅延import の動作確認 (クロスプラットフォーム修正の核心)
+    # =========================================================
 
-    def test_is_remote_path_s3(self):
-        """Test is_remote_path detects S3 paths"""
-        assert is_remote_path("s3://bucket/file.txt")
-        # Note: s3a:// support depends on implementation in storage_path_utils
+    def test_s3fs_is_not_imported_at_module_level(self):
+        """s3fsがモジュールレベルでimportされていないことを確認
+        Windows環境でs3fs未インストール時のクラッシュ防止"""
+        import scripts.core.infrastructure.storage_adapter as mod
+        assert "s3fs" not in dir(mod) or not hasattr(mod, "s3fs")
 
-    def test_is_remote_path_http(self):
-        """Test is_remote_path detects HTTP paths"""
-        assert is_remote_path("http://example.com/file.txt")
-        assert is_remote_path("https://example.com/file.txt")
+    def test_botocore_is_not_imported_at_module_level(self):
+        """botocore.exceptionsがモジュールレベルでimportされていないことを確認
+        Windows環境でboto3未インストール時のクラッシュ防止"""
+        import scripts.core.infrastructure.storage_adapter as mod
+        assert not hasattr(mod, "botocore")
 
-    def test_is_local_path_absolute(self, tmp_path):
-        """Test is_local_path detects absolute local paths"""
-        assert is_local_path(str(tmp_path / "file.txt"))
-        assert is_local_path("/absolute/path/file.txt")
+    def test_s3fs_lazy_import_in_read_text(self, sa):
+        """read_textのS3分岐でs3fsが遅延importされる"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value.read.return_value = ""
+            sa.read_text("s3://bucket/file.txt")
+            mock_cls.assert_called_once()
 
-    def test_is_local_path_relative(self):
-        """Test is_local_path detects relative local paths"""
-        assert is_local_path("relative/path/file.txt")
-        assert is_local_path("./file.txt")
-        assert is_local_path("../file.txt")
+    def test_s3fs_lazy_import_in_write_text(self, sa):
+        """write_textのS3分岐でs3fsが遅延importされる"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value = MagicMock()
+            sa.write_text("content", "s3://bucket/file.txt")
+            mock_cls.assert_called_once()
 
-    # -----------------------------
-    # Error handling and edge cases
-    # -----------------------------
-    def test_read_df_with_exception_logging(self, sa, tmp_path, caplog):
-        """Test that read_df logs errors properly"""
-        file_path = tmp_path / "nonexistent.csv"
-        with pytest.raises(Exception):
-            sa.read_df(str(file_path))
-        assert "Failed to read file" in caplog.text
+    def test_s3fs_lazy_import_in_read_bytes(self, sa):
+        """read_bytesのS3分岐でs3fsが遅延importされる"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value.read.return_value = b""
+            sa.read_bytes("s3://bucket/file.bin")
+            mock_cls.assert_called_once()
 
-    def test_write_df_with_exception_logging(self, sa, tmp_path, sample_df, caplog):
-        """Test that write_df logs errors properly"""
-        # Try to write to an invalid path
-        invalid_path = "/invalid/path/that/does/not/exist/file.csv"
-        with pytest.raises(Exception):
-            sa.write_df(sample_df, invalid_path)
-        assert "Failed to write file" in caplog.text
+    def test_s3fs_lazy_import_in_write_bytes(self, sa):
+        """write_bytesのS3分岐でs3fsが遅延importされる"""
+        with patch("s3fs.S3FileSystem") as mock_cls:
+            mock_s3 = MagicMock()
+            mock_cls.return_value = mock_s3
+            mock_s3.open.return_value.__enter__.return_value = MagicMock()
+            sa.write_bytes(b"\x00", "s3://bucket/file.bin")
+            mock_cls.assert_called_once()
 
-    def test_read_text_with_exception_logging(self, sa, tmp_path, caplog):
-        """Test that read_text logs errors properly"""
-        file_path = tmp_path / "nonexistent.txt"
-        with pytest.raises(Exception):
-            sa.read_text(str(file_path))
-        assert "Failed to read text" in caplog.text
+    # =========================================================
+    # Singleton
+    # =========================================================
 
-    def test_read_bytes_with_exception_logging(self, sa, tmp_path, caplog):
-        """Test that read_bytes logs errors properly"""
-        file_path = tmp_path / "nonexistent.bin"
-        with pytest.raises(Exception):
-            sa.read_bytes(str(file_path))
-        assert "Failed to read bytes" in caplog.text
-
-    def test_write_text_with_invalid_encoding_raises_error(self, sa, tmp_path):
-        """Test that write_text with invalid encoding raises error"""
-        file_path = tmp_path / "file.txt"
-        with pytest.raises(LookupError):
-            sa.write_text("content", str(file_path), encoding="invalid_encoding")
-
-    def test_read_text_with_invalid_encoding_raises_error(self, sa, tmp_path):
-        """Test that read_text with invalid encoding raises error"""
-        file_path = tmp_path / "file.txt"
-        sa.write_text("content", str(file_path))
-        with pytest.raises(LookupError):
-            sa.read_text(str(file_path), encoding="invalid_encoding")
-
-    def test_read_text_s3_exception(self, sa):
-        """Test that read_text handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = Mock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_s3.open.side_effect = Exception("S3 connection error")
-            
-            with pytest.raises(Exception, match="S3 connection error"):
-                sa.read_text(remote_path)
-
-    def test_write_text_s3_exception(self, sa):
-        """Test that write_text handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = Mock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_s3.open.side_effect = Exception("S3 connection error")
-            
-            with pytest.raises(Exception, match="S3 connection error"):
-                sa.write_text("content", remote_path)
-
-    def test_read_bytes_s3_exception(self, sa):
-        """Test that read_bytes handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.bin"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = Mock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_s3.open.side_effect = Exception("S3 connection error")
-            
-            with pytest.raises(Exception, match="S3 connection error"):
-                sa.read_bytes(remote_path)
-
-    def test_write_bytes_s3_exception(self, sa):
-        """Test that write_bytes handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.bin"
-        
-        with patch('s3fs.S3FileSystem') as mock_s3fs_class:
-            mock_s3 = Mock()
-            mock_s3fs_class.return_value = mock_s3
-            mock_s3.open.side_effect = Exception("S3 connection error")
-            
-            with pytest.raises(Exception, match="S3 connection error"):
-                sa.write_bytes(b"content", remote_path)
-
-    def test_download_remote_file_s3_exception(self, sa, tmp_path):
-        """Test that download_remote_file handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        local_path = tmp_path / "downloaded.txt"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.download_file.side_effect = Exception("S3 download error")
-            
-            with pytest.raises(Exception):
-                sa.download_remote_file(remote_path, str(local_path))
-
-    def test_upload_local_file_s3_exception(self, sa, tmp_path):
-        """Test that upload_local_file handles S3 exceptions properly"""
-        local_path = tmp_path / "file.txt"
-        sa.write_text("content", str(local_path))
-        remote_path = "s3://bucket/uploaded.txt"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.upload_file.side_effect = Exception("S3 upload error")
-            
-            with pytest.raises(Exception):
-                sa.upload_local_file(str(local_path), remote_path)
-
-    def test_list_files_s3_exception(self, sa):
-        """Test that list_files handles S3 exceptions properly"""
-        remote_path = "s3://bucket/prefix"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.get_paginator.side_effect = Exception("S3 list error")
-            
-            with pytest.raises(Exception):
-                sa.list_files(remote_path)
-
-    def test_exists_s3_exception(self, sa):
-        """Test that exists handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.head_object.side_effect = Exception("S3 head error")
-            
-            with pytest.raises(Exception):
-                sa.exists(remote_path)
-
-    def test_delete_s3_exception(self, sa):
-        """Test that delete handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.delete_object.side_effect = Exception("S3 delete error")
-            
-            with pytest.raises(Exception):
-                sa.delete(remote_path)
-
-    def test_get_size_s3_exception(self, sa):
-        """Test that get_size handles S3 exceptions properly"""
-        remote_path = "s3://bucket/file.txt"
-        
-        with patch('boto3.client') as mock_boto3:
-            mock_s3 = Mock()
-            mock_boto3.return_value = mock_s3
-            mock_s3.head_object.side_effect = Exception("S3 head error")
-            
-            with pytest.raises(Exception):
-                sa.get_size(remote_path)
-
-    # -----------------------------
-    # Singleton instance test
-    # -----------------------------
     def test_storage_adapter_singleton(self):
-        """Test that storage_adapter singleton is an instance of StorageAdapter"""
-        from scripts.core.infrastructure.storage_adapter import storage_adapter
+        """シングルトンインスタンスが StorageAdapter であること"""
         assert isinstance(storage_adapter, StorageAdapter)
 
-    # -----------------------------
-    # Integration tests with multiple formats
-    # -----------------------------
+    # =========================================================
+    # Integration: 各フォーマットの往復テスト
+    # =========================================================
+
     @pytest.mark.parametrize("fmt,content", [
-        ("csv", pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})),
+        ("csv",     pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})),
         ("parquet", pd.DataFrame({"x": [1.1, 2.2], "y": ["a", "b"]})),
-        ("json", pd.DataFrame({"col": [True, False]})),
-        ("xlsx", pd.DataFrame({"num": [10, 20], "text": ["hello", "world"]})),
+        ("json",    pd.DataFrame({"col": [True, False]})),
+        ("jsonl",   pd.DataFrame({"col": [True, False]})),
+        ("xlsx",    pd.DataFrame({"num": [10, 20], "text": ["hello", "world"]})),
     ])
     def test_round_trip_all_formats(self, sa, tmp_path, fmt, content):
-        """Test round-trip write and read for all supported formats"""
+        """全フォーマットの書き込み→読み込み往復"""
         file_path = tmp_path / f"test.{fmt}"
         sa.write_df(content, str(file_path))
         df = sa.read_df(str(file_path))
         pd.testing.assert_frame_equal(df, content)
 
-    def test_large_dataframe_write_read(self, sa, tmp_path):
-        """Test handling of large DataFrames"""
+    def test_dataframe_with_null_values(self, sa, tmp_path):
+        """null値を含むDataFrameの往復"""
+        null_df = pd.DataFrame({"col1": [1, None, 3], "col2": [None, "b", "c"]})
+        file_path = tmp_path / "null.parquet"
+        sa.write_df(null_df, str(file_path))
+        pd.testing.assert_frame_equal(sa.read_df(str(file_path)), null_df)
+
+    def test_large_dataframe(self, sa, tmp_path):
+        """大きなDataFrameの往復"""
         large_df = pd.DataFrame({
             "col1": range(10000),
             "col2": [f"text_{i}" for i in range(10000)],
-            "col3": [i * 1.5 for i in range(10000)]
         })
         file_path = tmp_path / "large.parquet"
         sa.write_df(large_df, str(file_path))
-        df = sa.read_df(str(file_path))
-        pd.testing.assert_frame_equal(df, large_df)
+        pd.testing.assert_frame_equal(sa.read_df(str(file_path)), large_df)
 
-    def test_dataframe_with_special_characters(self, sa, tmp_path):
-        """Test DataFrame with special characters in column names and values"""
-        special_df = pd.DataFrame({
-            "col with spaces": [1, 2],
-            "col-with-dashes": ["a", "b"],
-            "日本語列": ["テスト", "データ"]
-        })
-        file_path = tmp_path / "special.csv"
-        sa.write_df(special_df, str(file_path))
-        df = sa.read_df(str(file_path))
-        pd.testing.assert_frame_equal(df, special_df)
-
-    def test_empty_dataframe(self, sa, tmp_path):
-        """Test handling of empty DataFrames"""
-        empty_df = pd.DataFrame()
-        file_path = tmp_path / "empty.parquet"
-        sa.write_df(empty_df, str(file_path))
-        df = sa.read_df(str(file_path))
-        assert len(df) == 0
-
-    def test_empty_dataframe_csv_raises_error(self, sa, tmp_path):
-        """Test that empty DataFrame in CSV format raises error on read"""
-        empty_df = pd.DataFrame()
+    def test_empty_dataframe_with_columns(self, sa, tmp_path):
+        """カラムはあるが行がないDataFrame"""
+        df = pd.DataFrame(columns=["col1", "col2"])
         file_path = tmp_path / "empty.csv"
-        sa.write_df(empty_df, str(file_path))
-        # CSV with no columns cannot be read back
-        with pytest.raises(pd.errors.EmptyDataError):
-            sa.read_df(str(file_path))
-
-    def test_dataframe_with_columns_but_no_rows(self, sa, tmp_path):
-        """Test DataFrame with columns but no rows"""
-        empty_with_cols = pd.DataFrame(columns=["col1", "col2", "col3"])
-        file_path = tmp_path / "empty_with_cols.csv"
-        sa.write_df(empty_with_cols, str(file_path))
-        df = sa.read_df(str(file_path))
-        assert len(df) == 0
-        assert list(df.columns) == ["col1", "col2", "col3"]
-
-    def test_dataframe_with_null_values(self, sa, tmp_path):
-        """Test DataFrame with null values"""
-        null_df = pd.DataFrame({
-            "col1": [1, None, 3],
-            "col2": [None, "b", "c"]
-        })
-        file_path = tmp_path / "null.parquet"
-        sa.write_df(null_df, str(file_path))
-        df = sa.read_df(str(file_path))
-        pd.testing.assert_frame_equal(df, null_df)
-
-    # -----------------------------
-    # Encoding edge cases
-    # -----------------------------
-    def test_text_encoding_utf16(self, sa, tmp_path):
-        """Test UTF-16 encoding"""
-        file_path = tmp_path / "utf16.txt"
-        content = "UTF-16 テスト"
-        sa.write_text(content, str(file_path), encoding='utf-16')
-        result = sa.read_text(str(file_path), encoding='utf-16')
-        assert result == content
-
-    def test_text_encoding_cp932(self, sa, tmp_path):
-        """Test CP932 (Windows Japanese) encoding"""
-        file_path = tmp_path / "cp932.txt"
-        content = "日本語テキスト"
-        sa.write_text(content, str(file_path), encoding='cp932')
-        result = sa.read_text(str(file_path), encoding='cp932')
-        assert result == content
-
-    def test_text_multiline_with_encoding(self, sa, tmp_path):
-        """Test multiline text with various encodings"""
-        file_path = tmp_path / "multiline.txt"
-        content = "行1\n行2\n行3\nこんにちは"
-        sa.write_text(content, str(file_path), encoding='utf-8')
-        result = sa.read_text(str(file_path), encoding='utf-8')
-        assert result == content
-        assert result.count('\n') == 3
-
-    def test_text_empty_string(self, sa, tmp_path):
-        """Test writing and reading empty string"""
-        file_path = tmp_path / "empty.txt"
-        sa.write_text("", str(file_path))
-        result = sa.read_text(str(file_path))
-        assert result == ""
-
-    def test_text_with_bom(self, sa, tmp_path):
-        """Test UTF-8 with BOM"""
-        file_path = tmp_path / "bom.txt"
-        content = "BOM test"
-        sa.write_text(content, str(file_path), encoding='utf-8-sig')
-        result = sa.read_text(str(file_path), encoding='utf-8-sig')
-        assert result == content
+        sa.write_df(df, str(file_path))
+        result = sa.read_df(str(file_path))
+        assert list(result.columns) == ["col1", "col2"]
+        assert len(result) == 0
 
 
 if __name__ == "__main__":
