@@ -4,6 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+from utils.logger import AppLogger, setup_logger
+
+applogger = AppLogger(inputdataname="MainModule")
+applogger.init_logger("INFO")
+logger = setup_logger(__name__)
+
 # --- Python Path Setup ---
 current_file_path = os.path.abspath(__file__)
 project_root = current_file_path

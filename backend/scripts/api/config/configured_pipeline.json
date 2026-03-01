@@ -2,16 +2,24 @@
   "name": "configured_pipeline",
   "nodes": [
     {
-      "id": "step1_duckdb",
+      "id": "step1_save",
+      "plugin": "receive_http",
+      "params": {
+        "output_path": "../test/data/Step1/body.csv"
+      }
+    },
+    {
+      "id": "step2_duckdb",
       "plugin": "with_duckdb",
       "params": {
+        "input_path": "../test/data/Step1/body.csv",
         "query_file": "../test/data/Step2/step2_with_duckdb.sql",
         "output_path": "../test/data/Step3/run_pipeline_directly.parquet",
         "table_name": "source_data"
       }
     },
     {
-      "id": "step2_jinja2",
+      "id": "step3_jinja2",
       "plugin": "with_jinja2",
       "params": {
         "input_path": "../test/data/Step3/run_pipeline_directly.parquet",
@@ -20,7 +28,7 @@
       }
     },
     {
-      "id": "step3_http",
+      "id": "step4_http",
       "plugin": "to_http",
       "params": {
         "input_path": "../test/data/Step5/run_pipeline_directly.json",
@@ -30,14 +38,19 @@
   ],
   "edges": [
     {
-      "source_node_id": "step1_duckdb",
-      "target_node_id": "step2_jinja2",
-      "target_input_name": "input_data"
+      "source_node_id": "step1_save",
+      "target_node_id": "step2_duckdb",
+      "target_input_name": "input_path"
     },
     {
-      "source_node_id": "step2_jinja2",
-      "target_node_id": "step3_http",
-      "target_input_name": "input_data"
+      "source_node_id": "step2_duckdb",
+      "target_node_id": "step3_jinja2",
+      "target_input_name": "input_path"
+    },
+    {
+      "source_node_id": "step3_jinja2",
+      "target_node_id": "step4_http",
+      "target_input_name": "input_path"
     }
   ]
 }
