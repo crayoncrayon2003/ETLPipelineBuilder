@@ -2,7 +2,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY, call
 
 from api.services.pipeline_service import _normalize_path, _submit_node_task, run_pipeline_from_definition
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
@@ -42,15 +42,14 @@ class TestSubmitNodeTask:
         edges = [edge]
         project_root = "/home/project"
 
-        # Submit node2 (node1 is upstream)
-        future = _submit_node_task("node2", nodes_map, edges, project_root)
+        node_results_cache = {}
+        future = _submit_node_task("node2", nodes_map, edges, project_root, node_results_cache)
 
-        # Check that submit was called with node2
         mock_submit.assert_called_with(
             step_name="node2",
             plugin_name="plugin2",
             params={},
-            inputs={"input1": mock_future}  # future from node1 is passed
+            inputs={"input1": mock_future.result()}  # .result() で解決された値
         )
         assert future == mock_future
 
@@ -60,7 +59,6 @@ class TestRunPipelineFromDefinition:
 
     @patch("api.services.pipeline_service._submit_node_task")
     def test_run_pipeline_from_definition_calls_submit(self, mock_submit):
-        # Mock PipelineDefinition
         node1 = PipelineNode(id="n1", plugin="p1", params={})
         node2 = PipelineNode(id="n2", plugin="p2", params={})
         edges = []
@@ -68,10 +66,28 @@ class TestRunPipelineFromDefinition:
 
         run_pipeline_from_definition(pipeline_def, "/home/project")
 
-        # _submit_node_task is called for 2 nodes
+        # _submit_node_task は node_results_cache を第5引数として受け取る。
+        # node_results_cache は dynamic_etl_flow 内でローカル生成されるため
+        # テストから直接参照できない。
+        # ANY でマッチさせて「正しいノード・引数で呼ばれたか」を確認する。
         assert mock_submit.call_count == 2
-        mock_submit.assert_any_call("n1", {"n1": node1, "n2": node2}, edges, "/home/project")
-        mock_submit.assert_any_call("n2", {"n1": node1, "n2": node2}, edges, "/home/project")
+
+        # node_id / nodes_map / edges / project_root の4引数を確認し
+        # node_results_cache (第5引数) は ANY で受け入れる
+        expected_nodes_map = {"n1": node1, "n2": node2}
+        mock_submit.assert_any_call("n1", expected_nodes_map, edges, "/home/project", ANY)
+        mock_submit.assert_any_call("n2", expected_nodes_map, edges, "/home/project", ANY)
+
+        # node_results_cache が dict であることを確認
+        for actual_call in mock_submit.call_args_list:
+            cache_arg = actual_call.args[4] if len(actual_call.args) > 4 else actual_call.kwargs.get("node_results_cache")
+            assert isinstance(cache_arg, dict), "node_results_cache は dict でなければならない"
+
+        # 全呼び出しで同一の node_results_cache インスタンスが渡されることを確認
+        # (同一フロー内で共有されるキャッシュであることの保証)
+        caches = [c.args[4] for c in mock_submit.call_args_list]
+        assert caches[0] is caches[1], "全ノードで同一の node_results_cache が共有される"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

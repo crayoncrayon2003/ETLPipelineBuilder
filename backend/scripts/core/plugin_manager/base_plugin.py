@@ -1,4 +1,5 @@
 import abc
+import copy
 from typing import Dict, Any
 
 from core.data_container.container import DataContainer, DataContainerStatus
@@ -7,11 +8,16 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class BasePlugin(abc.ABC):
     """
     Abstract base class for ETL plugins.
     Provides a unified execution lifecycle:
     prev_execute → run → post_execute
+
+    引数の役割:
+        input_data : 前ステップから渡された入力データ。読み取り専用として扱うこと。
+        container  : execute() が新規作成した出力先。run() はここに結果を書き込む。
     """
 
     def __init__(self, params: Dict[str, Any]):
@@ -32,9 +38,10 @@ class BasePlugin(abc.ABC):
             return result
         except Exception as e:
             logger.error(f"[{self.get_plugin_name()}] Execution failed: {e}", exc_info=True)
-            container.set_status(DataContainerStatus.ERROR)
-            container.add_error(str(e))
-            return container
+            error_container = DataContainer()
+            error_container.set_status(DataContainerStatus.ERROR)
+            error_container.add_error(str(e))
+            return error_container
 
     def prev_execute(self, input_data: DataContainer, container: DataContainer) -> None:
         """
@@ -46,6 +53,17 @@ class BasePlugin(abc.ABC):
     def run(self, input_data: DataContainer, container: DataContainer) -> DataContainer:
         """
         Plugin-specific logic to be implemented by subclasses.
+
+        Args:
+            input_data: 前ステップから渡された入力データ。
+                        【読み取り専用】このオブジェクトを変更してはならない。
+                        変更が必要な場合は copy.deepcopy() してから使うこと。
+            container:  このプラグインの出力先。
+                        finalize_container(container, ...) に渡して結果を書き込む。
+
+        Returns:
+            finalize_container() で完成させた container を返すこと。
+            input_data をそのまま返してはならない。
         """
         pass
 
@@ -78,10 +96,16 @@ class BasePlugin(abc.ABC):
     ) -> DataContainer:
         """
         Helper to finalize container with success status, output path, and metadata.
+
+        Args:
+            container:   run() で受け取った出力先 DataContainer を渡すこと。
+                         input_data を渡すと入力データが破壊されるため厳禁。
+            output_path: 出力ファイルパス。
+            metadata:    追加するメタデータ。
         """
         container.set_status(DataContainerStatus.SUCCESS)
         if output_path:
             container.add_file_path(output_path)
         if metadata:
-            container.metadata.update(metadata)
+            container.metadata.update(copy.copy(metadata))
         return container

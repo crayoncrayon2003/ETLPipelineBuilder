@@ -3,368 +3,378 @@ import io
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
-from scripts.utils.logger import AppLogger, setup_logger, CustomFormatter
+from scripts.utils.logger import AppLogger, setup_logger, CustomFormatter, LOG_NAME2LEVEL
 
 
-# ==============================================
-# CustomFormatter Tests
-# ==============================================
+# ======================================================================
+# CustomFormatter
+# ======================================================================
 class TestCustomFormatter:
-    """CustomFormatter の format メソッドをテスト"""
 
     def test_format_with_inputdataname(self):
-        """inputdataname が設定されている場合"""
+        """inputdataname が設定されている場合 → フォーマットに含まれる"""
         formatter = CustomFormatter('[%(inputdataname)s] %(message)s', inputdataname="test_data")
         record = logging.LogRecord(
             name="test", level=logging.INFO, pathname="", lineno=0,
             msg="test message", args=(), exc_info=None
         )
-        formatted = formatter.format(record)
-        assert "[test_data]" in formatted
-        assert "test message" in formatted
+        assert "[test_data]" in formatter.format(record)
+        assert "test message" in formatter.format(record)
 
     def test_format_without_inputdataname(self):
-        """inputdataname が空の場合"""
+        """inputdataname が空の場合 → [] のまま"""
         formatter = CustomFormatter('[%(inputdataname)s] %(message)s', inputdataname="")
         record = logging.LogRecord(
             name="test", level=logging.INFO, pathname="", lineno=0,
             msg="test message", args=(), exc_info=None
         )
-        formatted = formatter.format(record)
-        assert "[]" in formatted
-        assert "test message" in formatted
+        assert "[]" in formatter.format(record)
+        assert "test message" in formatter.format(record)
+
+    def test_format_does_not_affect_other_records(self):
+        """format() が record に inputdataname を設定しても他の record に影響しない"""
+        formatter = CustomFormatter('[%(inputdataname)s] %(message)s', inputdataname="x")
+        r1 = logging.LogRecord("a", logging.INFO, "", 0, "msg1", (), None)
+        r2 = logging.LogRecord("b", logging.INFO, "", 0, "msg2", (), None)
+        formatter.format(r1)
+        formatter.format(r2)
+        assert r1.inputdataname == "x"
+        assert r2.inputdataname == "x"
 
 
-# ==============================================
-# AppLogger Tests
-# ==============================================
+# ======================================================================
+# AppLogger.init_logger
+#
+# MCDC:
+#   条件A: etl_framework_backend_handler が未登録か (app_handler is None)
+#     A=True  → 新規 StreamHandler を追加
+#     A=False → 既存 handler を再利用 (重複追加しない)
+#
+#   条件B: self.inputdataname が truthy か
+#     B=True  → INPUT_DATA_NAME をログ出力
+#     B=False → 出力しない
+#
+#   条件C: level_str が LOG_NAME2LEVEL に存在するか
+#     C=True  → 対応レベルを設定
+#     C=False → デフォルト INFO
+# ======================================================================
 class TestAppLogger:
 
     @pytest.fixture(autouse=True)
     def reset_logging(self):
-        """各テスト前後にルートロガーをクリア"""
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
         root_logger.setLevel(logging.WARNING)
         logging.Logger.manager.loggerDict.clear()
-
         yield
-
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
 
-    # -----------------------------
-    # init_logger
-    # -----------------------------
+    # ------------------------------------------------------------------
+    # 条件A: app_handler が None か
+    # ------------------------------------------------------------------
 
-    def test_init_logger_no_handlers(self, caplog):
-        """
-        MCDC: root_logger.handlers が空の場合
-        条件: not root_logger.handlers = True
-
-        この条件をテストするには、pytestのログキャプチャを一時的に無効化する必要があります。
-        代わりに、ハンドラが正しく機能することを検証します。
-        """
-        app_logger = AppLogger(inputdataname="data1")
-
-        # ログ出力を記録
+    def test_a_true_no_app_handler_adds_new_handler(self, caplog):
+        """A=True: etl_framework_backend_handler 未登録 → 新規追加される"""
         with caplog.at_level(logging.INFO):
-            logger = app_logger.init_logger(level_str="INFO")
-
-            # コンテキスト内でログレベルを確認
+            logger = AppLogger(inputdataname="data1").init_logger(level_str="INFO")
+            # caplog.at_level() は with ブロック終了後にレベルを元に戻すため
+            # logger.level の確認は with ブロック内で行う
             assert logger.level == logging.INFO
-
-            # 新しいログを出力
             logger.info("test_message")
 
-        # ログメッセージが出力されることを確認（ハンドラが機能している証拠）
         assert "LOG_LEVEL set to INFO" in caplog.text
         assert "INPUT_DATA_NAME: data1" in caplog.text
         assert "test_message" in caplog.text
 
-    def test_init_logger_with_existing_handlers(self):
-        """
-        MCDC: root_logger.handlers が既に存在する場合
-        条件: not root_logger.handlers = False
-        """
+    def test_a_true_handler_name_is_etl_framework(self):
+        """A=True: 新規追加された handler の name が 'etl_framework_backend_handler'"""
+        AppLogger(inputdataname="").init_logger()
         root_logger = logging.getLogger()
+        names = [getattr(h, "name", None) for h in root_logger.handlers]
+        assert "etl_framework_backend_handler" in names
 
-        # 事前にハンドラを追加
-        handler = logging.StreamHandler(stream=io.StringIO())
-        formatter = CustomFormatter('[%(inputdataname)s] %(message)s', inputdataname="old")
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
+    def test_a_false_second_call_does_not_duplicate_handler(self):
+        """A=False: init_logger を2回呼んでも etl_framework_backend_handler が重複しない"""
+        AppLogger(inputdataname="first").init_logger(level_str="INFO")
+        AppLogger(inputdataname="second").init_logger(level_str="DEBUG")
 
-        initial_handler_count = len(root_logger.handlers)
-
-        app_logger = AppLogger(inputdataname="data2")
-        logger = app_logger.init_logger(level_str="DEBUG")
-
+        root_logger = logging.getLogger()
         app_handlers = [
             h for h in root_logger.handlers
             if getattr(h, "name", None) == "etl_framework_backend_handler"
         ]
-
         assert len(app_handlers) == 1
-        assert logger.level == logging.DEBUG
 
-        # CustomFormatter の inputdataname が更新されていることを確認
-        has_updated_formatter = any(
-            isinstance(h.formatter, CustomFormatter) and h.formatter.inputdataname == "data2"
-            for h in root_logger.handlers
-        )
-        assert has_updated_formatter
-        assert logger.level == logging.DEBUG
+    def test_a_false_second_call_updates_formatter_inputdataname(self):
+        """A=False: 2回目の init_logger で formatter の inputdataname が更新される"""
+        AppLogger(inputdataname="first").init_logger(level_str="INFO")
+        AppLogger(inputdataname="second").init_logger(level_str="INFO")
 
-    def test_init_logger_with_inputdataname(self, caplog):
-        """
-        MCDC: self.inputdataname が設定されている場合
-        条件: if self.inputdataname = True
-        """
-        with caplog.at_level(logging.INFO):
-            app_logger = AppLogger(inputdataname="test_input")
-            logger = app_logger.init_logger(level_str="INFO")
-
-        # INPUT_DATA_NAME がログに出力されることを確認
-        assert "INPUT_DATA_NAME: test_input" in caplog.text
-
-    def test_init_logger_without_inputdataname(self, caplog):
-        """
-        MCDC: self.inputdataname が空の場合
-        条件: if self.inputdataname = False
-        """
-        with caplog.at_level(logging.INFO):
-            app_logger = AppLogger(inputdataname="")
-            logger = app_logger.init_logger(level_str="INFO")
-
-        # INPUT_DATA_NAME が出力されないことを確認
-        assert "INPUT_DATA_NAME:" not in caplog.text
-        # LOG_LEVEL は出力される
-        assert "LOG_LEVEL set to INFO" in caplog.text
-
-    def test_init_logger_handler_formatter_is_custom(self):
-        """
-        MCDC: handler.formatter が CustomFormatter の場合
-        条件: isinstance(handler.formatter, CustomFormatter) = True
-        """
         root_logger = logging.getLogger()
-
-        # 事前に CustomFormatter を持つハンドラを追加
-        handler = logging.StreamHandler(stream=io.StringIO())
-        formatter = CustomFormatter('[%(inputdataname)s] %(message)s', inputdataname="old")
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
-
-        app_logger = AppLogger(inputdataname="new_data")
-        logger = app_logger.init_logger(level_str="INFO")
-
-        # CustomFormatter の inputdataname が更新されていることを確認
         app_handler = next(
             h for h in root_logger.handlers
             if getattr(h, "name", None) == "etl_framework_backend_handler"
         )
+        assert app_handler.formatter.inputdataname == "second"
 
-        assert isinstance(app_handler.formatter, CustomFormatter)
-        assert app_handler.formatter.inputdataname == "new_data"
+    def test_a_false_second_call_updates_level(self):
+        """A=False: 2回目の init_logger でレベルが更新される"""
+        AppLogger(inputdataname="").init_logger(level_str="INFO")
+        AppLogger(inputdataname="").init_logger(level_str="DEBUG")
 
-    def test_init_logger_handler_formatter_not_custom(self):
-        """
-        MCDC: handler.formatter が CustomFormatter でない場合
-        条件: isinstance(handler.formatter, CustomFormatter) = False
-        """
         root_logger = logging.getLogger()
+        assert root_logger.level == logging.DEBUG
 
-        # 事前に通常の Formatter を持つハンドラを追加
-        handler = logging.StreamHandler(stream=io.StringIO())
-        formatter = logging.Formatter('%(message)s')
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
+    def test_existing_non_app_handler_is_not_removed(self):
+        """init_logger は自分の handler 以外の既存 handler を削除しない"""
+        root_logger = logging.getLogger()
+        external_handler = logging.StreamHandler(stream=io.StringIO())
+        root_logger.addHandler(external_handler)
 
-        original_formatter = handler.formatter
+        AppLogger(inputdataname="x").init_logger()
 
-        app_logger = AppLogger(inputdataname="new_data")
-        logger = app_logger.init_logger(level_str="INFO")
+        assert external_handler in root_logger.handlers
 
-        # 通常の Formatter は更新されない
-        assert handler.formatter is original_formatter
-        assert not isinstance(handler.formatter, CustomFormatter)
+    def test_non_app_handler_formatter_is_not_changed(self):
+        """init_logger は etl_framework_backend_handler 以外の formatter を変更しない"""
+        root_logger = logging.getLogger()
+        external_handler = logging.StreamHandler(stream=io.StringIO())
+        original_formatter = logging.Formatter('%(message)s')
+        external_handler.setFormatter(original_formatter)
+        root_logger.addHandler(external_handler)
 
-    # -----------------------------
-    # LOG_NAME2LEVEL
-    # -----------------------------
+        AppLogger(inputdataname="new_data").init_logger(level_str="INFO")
 
-    @pytest.mark.parametrize("level_str,expected_level", [
-        ("TRACE", logging.DEBUG),
-        ("DEBUG", logging.DEBUG),
-        ("INFO", logging.INFO),
-        ("WARN", logging.WARNING),
-        ("ERROR", logging.ERROR),
-        ("FATAL", logging.FATAL),
-        ("UNKNOWN", logging.INFO),  # デフォルト値
+        assert external_handler.formatter is original_formatter
+        assert not isinstance(external_handler.formatter, CustomFormatter)
+
+    def test_app_handler_has_custom_formatter(self):
+        """etl_framework_backend_handler には CustomFormatter がセットされる"""
+        AppLogger(inputdataname="fmt_test").init_logger()
+        root_logger = logging.getLogger()
+        app_handler = next(
+            h for h in root_logger.handlers
+            if getattr(h, "name", None) == "etl_framework_backend_handler"
+        )
+        assert isinstance(app_handler.formatter, CustomFormatter)
+        assert app_handler.formatter.inputdataname == "fmt_test"
+
+    # ------------------------------------------------------------------
+    # 条件B: self.inputdataname が truthy か
+    # ------------------------------------------------------------------
+
+    def test_b_true_inputdataname_logged(self, caplog):
+        """B=True: inputdataname あり → INPUT_DATA_NAME がログ出力される"""
+        with caplog.at_level(logging.INFO):
+            AppLogger(inputdataname="test_input").init_logger(level_str="INFO")
+        assert "INPUT_DATA_NAME: test_input" in caplog.text
+
+    def test_b_false_no_inputdataname_not_logged(self, caplog):
+        """B=False: inputdataname 空 → INPUT_DATA_NAME はログ出力されない"""
+        with caplog.at_level(logging.INFO):
+            AppLogger(inputdataname="").init_logger(level_str="INFO")
+        assert "INPUT_DATA_NAME:" not in caplog.text
+        assert "LOG_LEVEL set to INFO" in caplog.text
+
+    # ------------------------------------------------------------------
+    # 条件C: level_str のマッピング
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("level_str, expected_level", [
+        ("TRACE",    logging.DEBUG),
+        ("DEBUG",    logging.DEBUG),
+        ("INFO",     logging.INFO),
+        ("WARN",     logging.WARNING),
+        ("WARNING",  logging.WARNING),
+        ("ERROR",    logging.ERROR),
+        ("FATAL",    logging.FATAL),
+        ("CRITICAL", logging.CRITICAL),
+        ("UNKNOWN",  logging.INFO),      # C=False: デフォルト INFO
+        ("info",     logging.INFO),      # 大文字小文字を区別しない
     ])
-    def test_init_logger_levels(self, level_str, expected_level):
-        """各ログレベルの設定をテスト"""
-        app_logger = AppLogger(inputdataname="")
-        logger = app_logger.init_logger(level_str=level_str)
-
+    def test_c_all_level_strings(self, level_str, expected_level):
+        """C=True/False: 全レベル文字列とデフォルトフォールバックを確認"""
+        logger = AppLogger(inputdataname="").init_logger(level_str=level_str)
         assert logger.level == expected_level
 
-    def test_get_logger(self):
-        """get_logger メソッドのテスト"""
-        app_logger = AppLogger(inputdataname="test")
-        logger = app_logger.get_logger("test_module")
+    # ------------------------------------------------------------------
+    # root_logger.propagate が変更されないこと
+    # ------------------------------------------------------------------
 
+    def test_init_logger_does_not_set_root_propagate(self):
+        """init_logger は root_logger.propagate を変更しない
+        ルートロガーに親はないため propagate の設定は無意味"""
+        root_logger = logging.getLogger()
+        original_propagate = root_logger.propagate
+        AppLogger(inputdataname="").init_logger()
+        assert root_logger.propagate == original_propagate
+
+    # ------------------------------------------------------------------
+    # LOG_NAME2LEVEL の定義確認
+    # ------------------------------------------------------------------
+
+    def test_log_name2level_contains_warning(self):
+        """LOG_NAME2LEVEL に WARNING が含まれる"""
+        assert "WARNING" in LOG_NAME2LEVEL
+        assert LOG_NAME2LEVEL["WARNING"] == logging.WARNING
+
+    def test_log_name2level_contains_critical(self):
+        """LOG_NAME2LEVEL に CRITICAL が含まれる"""
+        assert "CRITICAL" in LOG_NAME2LEVEL
+        assert LOG_NAME2LEVEL["CRITICAL"] == logging.CRITICAL
+
+    def test_log_name2level_fatal_equals_critical(self):
+        """FATAL と CRITICAL は同じ値 (50) である"""
+        assert LOG_NAME2LEVEL["FATAL"] == LOG_NAME2LEVEL["CRITICAL"]
+
+    # ------------------------------------------------------------------
+    # get_logger
+    # ------------------------------------------------------------------
+
+    def test_get_logger_returns_named_logger(self):
+        """get_logger は指定した name の Logger を返す"""
+        logger = AppLogger(inputdataname="test").get_logger("test_module")
         assert logger.name == "test_module"
         assert isinstance(logger, logging.Logger)
 
 
-# ==============================================
-# setup_logger Tests
-# ==============================================
+# ======================================================================
+# setup_logger
+#
+# MCDC:
+#   条件D: root_logger.handlers が空か
+#     D=True  → デフォルトハンドラを追加
+#     D=False → 何も追加しない
+# ======================================================================
 class TestSetupLogger:
 
     @pytest.fixture(autouse=True)
     def reset_logging(self):
-        """各テスト前後にルートロガーをクリア"""
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
         root_logger.setLevel(logging.WARNING)
         logging.Logger.manager.loggerDict.clear()
-
         yield
-
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
 
-    def test_setup_logger_root_no_handlers(self, caplog):
-        """
-        MCDC: root が未初期化（ハンドラなし）の場合
-        条件: not root_logger.handlers = True
-
-        この条件をテストするには、pytestのログキャプチャを一時的に無効化する必要があります。
-        代わりに、デフォルト初期化が正しく機能することを検証します。
-        """
+    def test_d_true_adds_default_handler(self, caplog):
+        """D=True: root 未初期化 → デフォルトハンドラが追加され INFO が動作する"""
         with caplog.at_level(logging.INFO):
             logger = setup_logger("test_module")
             logger.info("Test message from module")
 
-        # ロガーが正しく設定されていることを確認
         assert logger.propagate is True
         assert logger.level == logging.NOTSET
-
-        # ログメッセージが出力されることを確認（ハンドラが機能している証拠）
         assert "Test message from module" in caplog.text
 
-    def test_setup_logger_root_with_handlers(self):
-        """
-        MCDC: root が既に初期化されている場合
-        条件: not root_logger.handlers = False
-        """
+    def test_d_true_default_handler_has_custom_formatter(self):
+        """D=True: デフォルト追加された handler が CustomFormatter を使う
+        pytest が内部ハンドラを持つため、patch.object で handlers を空リストに制御し
+        「ハンドラなし」状態を確実に再現する"""
+        added_handlers = []
+
+        def mock_add_handler(handler):
+            added_handlers.append(handler)
+
         root_logger = logging.getLogger()
+        with patch.object(logging.root, 'handlers', new=[]):
+            with patch.object(root_logger, 'addHandler', side_effect=mock_add_handler):
+                setup_logger("test_module")
 
-        # 事前に root を初期化
-        handler = logging.StreamHandler(stream=io.StringIO())
-        root_logger.addHandler(handler)
+        assert any(isinstance(h.formatter, CustomFormatter) for h in added_handlers)
+
+    def test_d_false_existing_handler_not_duplicated(self):
+        """D=False: root に既存 handler あり → ハンドラが重複追加されない"""
+        root_logger = logging.getLogger()
+        root_logger.addHandler(logging.StreamHandler(stream=io.StringIO()))
         root_logger.setLevel(logging.INFO)
+        initial_count = len(root_logger.handlers)
 
-        initial_handler_count = len(root_logger.handlers)
+        setup_logger("test_module2")
 
-        logger = setup_logger("test_module2")
+        assert len(root_logger.handlers) == initial_count
 
-        # ハンドラが重複追加されていないことを確認
-        assert len(root_logger.handlers) == initial_handler_count
-        assert logger.propagate is True
+    def test_propagate_is_true(self):
+        """setup_logger が返す logger の propagate が True"""
+        assert setup_logger("test_propagation").propagate is True
 
-    def test_setup_logger_propagation(self):
-        """ロガーの propagate 設定を確認"""
-        logger = setup_logger("test_propagation")
+    def test_level_is_notset(self):
+        """setup_logger が返す logger の level が NOTSET (root から継承)"""
+        assert setup_logger("test_level").level == logging.NOTSET
 
-        assert logger.propagate is True
-        assert logger.level == logging.NOTSET
-
-    def test_setup_logger_message_propagates(self, caplog):
-        """子ロガーのメッセージが root に伝播することを確認"""
+    def test_message_propagates_to_root(self, caplog):
+        """子ロガーのメッセージが root に伝播する"""
         with caplog.at_level(logging.INFO):
             logger = setup_logger("test_child")
             logger.info("Test message")
-
-        # メッセージが記録されていることを確認
         assert "Test message" in caplog.text
 
+    def test_setup_logger_does_not_set_root_propagate(self):
+        """setup_logger は root_logger.propagate を変更しない"""
+        root_logger = logging.getLogger()
+        original_propagate = root_logger.propagate
+        setup_logger("test_no_propagate")
+        assert root_logger.propagate == original_propagate
 
-# ==============================================
+
+# ======================================================================
 # Integration Tests
-# ==============================================
+# ======================================================================
 class TestIntegration:
-    """AppLogger と setup_logger の統合テスト"""
 
     @pytest.fixture(autouse=True)
     def reset_logging(self):
-        """各テスト前後にルートロガーをクリア"""
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
         root_logger.setLevel(logging.WARNING)
         logging.Logger.manager.loggerDict.clear()
-
         yield
-
         root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
-            handler.close()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+            h.close()
 
-    def test_applogger_with_setup_logger(self, caplog):
-        """AppLogger で初期化後、setup_logger で取得したロガーが正しく動作"""
+    def test_applogger_then_setup_logger(self, caplog):
+        """AppLogger で初期化後、setup_logger の子ロガーが正しく動作する"""
         with caplog.at_level(logging.DEBUG):
-            # AppLogger で初期化
-            app_logger = AppLogger(inputdataname="integration_test")
-            app_logger.init_logger(level_str="DEBUG")
-
-            # setup_logger で子ロガーを取得
+            AppLogger(inputdataname="integration_test").init_logger(level_str="DEBUG")
             logger = setup_logger("child_module")
             logger.debug("Debug from child")
             logger.info("Info from child")
 
-        # メッセージが記録されていることを確認
         assert "Debug from child" in caplog.text
         assert "Info from child" in caplog.text
         assert "INPUT_DATA_NAME: integration_test" in caplog.text
 
-    def test_applogger_format_applied(self):
-        """AppLogger のフォーマットが正しく適用されることを確認"""
+    def test_custom_formatter_output_format(self):
+        """CustomFormatter のフォーマットが実際の出力に適用される"""
         log_stream = io.StringIO()
-
-        # 直接 StreamHandler を root に追加
         root_logger = logging.getLogger()
         handler = logging.StreamHandler(stream=log_stream)
-        formatter = CustomFormatter(
+        handler.setFormatter(CustomFormatter(
             '[%(inputdataname)s][%(levelname)s] %(message)s',
             inputdataname="format_test"
-        )
-        handler.setFormatter(formatter)
+        ))
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)
 
-        # ログ出力
         root_logger.info("Test message")
 
-        # フォーマットの確認
-        log_output = log_stream.getvalue()
-        assert "[format_test]" in log_output
-        assert "Test message" in log_output
+        output = log_stream.getvalue()
+        assert "[format_test]" in output
+        assert "Test message" in output
 
 
 if __name__ == "__main__":

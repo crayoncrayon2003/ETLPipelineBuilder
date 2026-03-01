@@ -349,7 +349,7 @@ class TestAWSResolveNestedKey:
 
 
 # ======================================================================
-# AWSSecretResolver._set_nested_key (修正3)
+# AWSSecretResolver._set_nested_key
 # ======================================================================
 class TestSetNestedKey:
 
@@ -481,7 +481,7 @@ class TestWriteToSecretsManager:
         )
 
     def test_s_true_t_true_create_with_nested_json_key(self, r):
-        """R=True, S=True, T=True: 新規作成 (JSONキーあり) → ネスト構造で create (修正3)"""
+        """R=True, S=True, T=True: 新規作成 (JSONキーあり) → ネスト構造で create"""
         r.secretsmanager_client = Mock()
         _resource_not_found(r.secretsmanager_client)
         r._write_to_secretsmanager("aws_secretsmanager://new-secret@a.b", "val")
@@ -498,9 +498,8 @@ class TestWriteToSecretsManager:
         )
 
     def test_s_false_t_true_update_with_nested_json_key(self, r):
-        """R=True, S=False, T=True: 既存JSONにネスト構造でマージ (修正3)
-        修正前: data['a.b'] = 'val' というフラットなキーで書き込まれた
-        修正後: data['a']['b'] = 'val' というネスト構造で書き込まれる"""
+        """R=True, S=False, T=True: 既存JSONにネスト構造でマージ
+        data['a']['b'] = 'val' というネスト構造で書き込まれる"""
         r.secretsmanager_client = Mock()
         r.secretsmanager_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"other": "keep"})
@@ -525,7 +524,7 @@ class TestWriteToSecretsManager:
             r._write_to_secretsmanager("aws_secretsmanager://my-secret", "val")
 
     def test_write_read_roundtrip_nested_key(self, r):
-        """修正3の往復確認: write(a.b)したものをread(a.b)で取得できる"""
+        """write(a.b)したものをread(a.b)で取得できる"""
         stored: dict = {}
 
         def fake_get(**kw):
@@ -543,7 +542,7 @@ class TestWriteToSecretsManager:
 
 
 # ======================================================================
-# AWSSecretResolver.write (prefix ルーティング + 修正2)
+# AWSSecretResolver.write (prefix ルーティング)
 # ======================================================================
 class TestAWSSecretResolverWrite:
 
@@ -552,8 +551,7 @@ class TestAWSSecretResolverWrite:
         return _make_aws_resolver()
 
     def test_unsupported_prefix_raises_secret_write_error(self, r):
-        """修正2: 不明プレフィックス → SecretWriteError
-        修正前は logger.warning + return None のみで失敗を検知できなかった"""
+        """不明プレフィックス → SecretWriteError"""
         with pytest.raises(SecretWriteError, match="unsupported reference format"):
             r.write("unsupported://ref", "value")
 

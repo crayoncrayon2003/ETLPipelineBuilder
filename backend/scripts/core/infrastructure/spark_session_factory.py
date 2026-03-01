@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 from typing import Optional
 
@@ -16,6 +17,7 @@ class SparkSessionFactory:
             return SparkSessionFactory._spark_session
 
         with SparkSessionFactory._lock:
+            # ロック取得後に再チェック (double-checked locking)
             if SparkSessionFactory._spark_session is not None:
                 return SparkSessionFactory._spark_session
 
@@ -32,9 +34,8 @@ class SparkSessionFactory:
                 from pyspark import SparkConf
                 from pyspark.sql import SparkSession
 
-                os.environ.setdefault("PYSPARK_PYTHON", "/usr/bin/python3.9")
-                os.environ.setdefault("PYSPARK_DRIVER_PYTHON", "/usr/bin/python3.9")
-                os.environ.setdefault("JAVA_HOME", "/usr/lib/jvm/java-11-openjdk-amd64")
+                os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+                os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
                 conf = (
                     SparkConf()
@@ -68,6 +69,7 @@ class SparkSessionFactory:
 
     @staticmethod
     def get_glue_context():
+        # ローカル(Windows)環境で呼ばれた場合に明確なエラーを出す
         if not is_running_on_aws():
             raise RuntimeError(
                 "GlueContext is only available on AWS Glue. "

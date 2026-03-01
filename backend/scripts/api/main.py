@@ -14,8 +14,6 @@ scripts_path = os.path.join(project_root, "scripts")
 if str(scripts_path) not in sys.path:
     sys.path.append(str(scripts_path))
 
-from api.schemas import pipeline as pipeline_schema_module
-from api.services import pipeline_service as pipeline_service_module
 
 from core.plugin_manager.manager import framework_manager
 

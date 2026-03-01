@@ -817,12 +817,11 @@ class TestStorageAdapter:
     # stat
     # MCDC:
     #   条件A: is_remote_path(path)
-    #   修正確認: last_modified が常に timezone-aware (UTC) であること
+    #    last_modified が常に timezone-aware (UTC) であること
     # =========================================================
 
     def test_stat_local_returns_aware_datetime(self, sa, tmp_path):
-        """A=False: last_modified が timezone-aware (UTC) であることを確認
-        修正点: datetime.fromtimestamp(ts, tz=timezone.utc)"""
+        """A=False: last_modified が timezone-aware (UTC) であることを確認"""
         file_path = tmp_path / "file.txt"
         file_path.write_text("test")
         stat_info = sa.stat(str(file_path))
@@ -849,8 +848,7 @@ class TestStorageAdapter:
         assert stat_info["last_modified"].tzinfo is not None
 
     def test_stat_local_and_s3_last_modified_comparable(self, sa, tmp_path):
-        """ローカルとS3の last_modified が型として比較可能であることを確認
-        修正前は naive vs aware で TypeError が発生していた"""
+        """ローカルとS3の last_modified が型として比較可能であることを確認"""
         file_path = tmp_path / "file.txt"
         file_path.write_text("test")
         local_stat = sa.stat(str(file_path))
@@ -901,7 +899,7 @@ class TestStorageAdapter:
         assert sa._get_storage_options("s3://bucket/file.txt") == {}
 
     # =========================================================
-    # 遅延import の動作確認 (クロスプラットフォーム修正の核心)
+    # 遅延import の動作確認
     # =========================================================
 
     def test_s3fs_is_not_imported_at_module_level(self):

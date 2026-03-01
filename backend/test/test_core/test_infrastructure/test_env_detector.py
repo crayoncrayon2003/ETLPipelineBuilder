@@ -149,15 +149,12 @@ class TestIsRunningOnAws:
 
     # =========================================================
     # Windows開発環境での誤判定がないことの確認
-    # (修正1の核心: boto3/STS を使わないことで解決)
     # =========================================================
 
     def test_returns_false_without_aws_env_vars_even_if_credentials_exist(self):
         """AWS認証情報があってもAWS環境変数がなければ False を返す。
 
-        修正前の問題: ~/.aws/credentials があると boto3 の STS 呼び出しが成功し、
-        account_id が取れて True になっていた (Windowsローカルで誤判定)。
-        修正後は boto3/STS を使わず環境変数のみで判定するため誤判定しない。
+        boto3/STS を使わず環境変数のみで判定するため誤判定しない。
         """
         # AWS認証情報が設定されているかのような状況でも
         # AWS_LAMBDA_FUNCTION_NAME / GLUE_VERSION / AWS_EXECUTION_ENV が

@@ -14,11 +14,13 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-_node_results_cache: Dict[str, Any] = {}
 
 @task(name="API Triggered Step")
 def execute_step_api_task(
-    step_name: str, plugin_name: str, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]] = None
+    step_name: str,
+    plugin_name: str,
+    params: Dict[str, Any],
+    inputs: Optional[Dict[str, Optional[DataContainer]]] = None
 ) -> Optional[DataContainer]:
     """ A reusable Prefect task that runs any plugin step. """
     inputs = inputs or {}
@@ -26,6 +28,7 @@ def execute_step_api_task(
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
     logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
     return step_executor.execute_step(step_config, inputs)
+
 
 def _normalize_path(path_str: str, project_root: str) -> str:
     """
@@ -37,10 +40,8 @@ def _normalize_path(path_str: str, project_root: str) -> str:
         return wsl_match.group(2)
     win_match = re.match(r"^([a-zA-Z]):/", normalized_str)
     if win_match:
-        # for Windows, we convert to WSL path format. For non-Windows, we assume it's already a valid path.
         if platform.system() == "Windows":
             return path_str
-
         drive = win_match.group(1).lower()
         path_remainder = normalized_str[len(win_match.group(0)):]
         return f"/mnt/{drive}/{path_remainder}"
@@ -48,34 +49,48 @@ def _normalize_path(path_str: str, project_root: str) -> str:
         return os.path.join(project_root, normalized_str)
     return normalized_str
 
+
 def _submit_node_task(
-    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root: str
+    node_id: str,
+    nodes_map: Dict[str, PipelineNode],
+    edges: List[PipelineEdge],
+    project_root: str,
+    node_results_cache: Dict[str, Any],
 ):
     """
     Recursively submits a node's task to Prefect, resolving paths correctly.
     """
-    if node_id in _node_results_cache: return _node_results_cache[node_id]
+    if node_id in node_results_cache:
+        return node_results_cache[node_id]
+
     node_def = nodes_map[node_id]
 
-    upstream_inputs = {}
+    upstream_inputs: Dict[str, Optional[DataContainer]] = {}
     for edge in edges:
         if edge.target_node_id == node_id:
-            source_future = _submit_node_task(edge.source_node_id, nodes_map, edges, project_root)
-            upstream_inputs[edge.target_input_name] = source_future
+            source_future = _submit_node_task(
+                edge.source_node_id, nodes_map, edges, project_root, node_results_cache
+            )
+            if hasattr(source_future, "result"):
+                upstream_inputs[edge.target_input_name] = source_future.result()
+            else:
+                upstream_inputs[edge.target_input_name] = source_future
 
     params = node_def.params.copy()
-
     for key, value in params.items():
         if isinstance(value, str) and ("path" in key or "_file" in key):
             params[key] = _normalize_path(value, project_root)
 
     future = execute_step_api_task.submit(
-        step_name=node_def.id, plugin_name=node_def.plugin,
-        params=params, inputs=upstream_inputs
+        step_name=node_def.id,
+        plugin_name=node_def.plugin,
+        params=params,
+        inputs=upstream_inputs,
     )
 
-    _node_results_cache[node_id] = future
+    node_results_cache[node_id] = future
     return future
+
 
 def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root: str):
     """
@@ -84,9 +99,11 @@ def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root:
     @flow(name=pipeline_def.name)
     def dynamic_etl_flow():
         logger.info(f"Starting dynamically generated flow: {pipeline_def.name}")
-        _node_results_cache.clear()
+        node_results_cache: Dict[str, Any] = {}
         nodes_map = {node.id: node for node in pipeline_def.nodes}
         for node_id in nodes_map:
-            _submit_node_task(node_id, nodes_map, pipeline_def.edges, project_root)
+            _submit_node_task(
+                node_id, nodes_map, pipeline_def.edges, project_root, node_results_cache
+            )
 
     dynamic_etl_flow()

@@ -178,8 +178,7 @@ class AWSSecretResolver(BaseSecretResolver):
         elif secret_reference.startswith("aws_kms_encrypt://"):
             return self._encrypt_with_kms(secret_reference, secret_value, kwargs.get("encryption_context"))
         else:
-            # 修正2: DotEnvSecretResolver.write() との一貫性のため SecretWriteError を raise する
-            # 修正前は logger.warning と return None のみで、呼び出し側が失敗に気づけなかった
+            # DotEnvSecretResolver.write() との一貫性のため SecretWriteError を raise する
             raise SecretWriteError(
                 f"AWSSecretResolver received unsupported reference format "
                 f"for writing: '{secret_reference}'."
@@ -206,12 +205,7 @@ class AWSSecretResolver(BaseSecretResolver):
         """
         key_path ("a.b.c" 形式) に従ってネストした辞書に値をセットする。
 
-        修正3: _write_to_secretsmanager() のネストキー対応
-        修正前は data[json_key] = secret_value と書いており、
-        "a.b" というフラットなキーで書き込まれていた。
-        read() は key_path.split(".") で多段ネストをたどるため、
-        write したものを read で取得できない非対称が生じていた。
-        本メソッドにより read/write の階層構造を一致させる。
+        _write_to_secretsmanager() のネストキー対応
         """
         keys = key_path.split(".")
         target = data
@@ -269,9 +263,8 @@ class AWSSecretResolver(BaseSecretResolver):
                     data = json.loads(current_secret)
                 except json.JSONDecodeError:
                     data = {}
-                # 修正3: "a.b" をフラットキーとして使うのではなくネスト構造で書き込む
-                # 修正前: data[json_key] = secret_value  ("a.b" というキーが直接作られる)
-                # 修正後: _set_nested_key() でネスト階層をたどって書き込む
+                # "a.b" をフラットキーとして使うのではなくネスト構造で書き込む
+                # _set_nested_key() でネスト階層をたどって書き込む
                 self._set_nested_key(data, json_key, secret_value)
                 secret_value_to_put = json.dumps(data)
             else:

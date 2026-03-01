@@ -80,12 +80,7 @@ def read_secret(param_value: Any, resolver=None, **kwargs: Any) -> Optional[Any]
         "Bearer ${secrets.env://MY_TOKEN}"            -> "Bearer abc123token"
         "${secrets.env://USER}:${secrets.env://PASS}" -> "test_user:secret_pass"
 
-    修正4: 型アノテーションを実装に合わせて修正
-    修正前: (param_value: str, ...) -> str
-      - str でない引数をそのまま返す実装があるにもかかわらず引数型が str
-      - resolver.read() が None を返す場合があるにもかかわらず戻り値型が str
-      → mypy が誤った安全性を示していた
-    修正後: (param_value: Any, ...) -> Optional[Any]
+    (param_value: Any, ...) -> Optional[Any]
       - 実装の実際の動作を正確に表現する
     """
     if resolver is None:

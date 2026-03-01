@@ -381,7 +381,7 @@ class TestAWSResolveNestedKey:
 
 # ======================================================================
 # AWSSecretResolver._set_nested_key
-# MCDC (修正3の core ロジック):
+# MCDC:
 #   単一キー / 2段 / 3段 / 既存値更新 / 他キー保持 / 中間が非dict
 # ======================================================================
 class TestSetNestedKey:
@@ -537,7 +537,7 @@ class TestWriteToSecretsManager:
         )
 
     def test_s_true_t_true_create_with_json_key_nested(self, r):
-        """R=True, S=True, T=True: 新規作成 (JSONキーあり) → ネスト構造で create (修正3)"""
+        """R=True, S=True, T=True: 新規作成 (JSONキーあり) → ネスト構造で create"""
         r.secretsmanager_client = Mock()
         _resource_not_found(r.secretsmanager_client)
         r._write_to_secretsmanager("aws_secretsmanager://new-secret@a.b", "val")
@@ -555,17 +555,16 @@ class TestWriteToSecretsManager:
         )
 
     def test_s_false_t_true_update_with_json_key_nested(self, r):
-        """R=True, S=False, T=True: 既存JSON に json_key をネスト構造でマージ (修正3)
-        修正前: data['a.b'] = 'val' というフラットなキーで書き込まれた
-        修正後: data['a']['b'] = 'val' というネスト構造で書き込まれる"""
+        """R=True, S=False, T=True: 既存JSON に json_key をネスト構造でマージ
+        data['a']['b'] = 'val' というネスト構造で書き込まれる"""
         r.secretsmanager_client = Mock()
         existing = json.dumps({"other": "keep"})
         r.secretsmanager_client.get_secret_value.return_value = {"SecretString": existing}
         r._write_to_secretsmanager("aws_secretsmanager://my-secret@a.b", "new_val")
         call_args = r.secretsmanager_client.put_secret_value.call_args
         payload = json.loads(call_args.kwargs["SecretString"])
-        assert payload["a"]["b"] == "new_val"   # ネスト構造 (修正3)
-        assert payload["other"] == "keep"        # 既存キー保持
+        assert payload["a"]["b"] == "new_val"
+        assert payload["other"] == "keep"
 
     def test_u_false_invalid_existing_json_starts_fresh(self, r):
         """R=True, S=False, T=True, U=False: 既存が不正JSON → data={} から開始"""
@@ -584,7 +583,7 @@ class TestWriteToSecretsManager:
             r._write_to_secretsmanager("aws_secretsmanager://my-secret", "val")
 
     def test_write_read_roundtrip_nested_key(self, r):
-        """修正3の往復確認: write(a.b) したものを read(a.b) で取得できる"""
+        """write(a.b) したものを read(a.b) で取得できる"""
         stored: dict = {}
 
         def fake_get(**kw):
@@ -603,7 +602,7 @@ class TestWriteToSecretsManager:
 
 
 # ======================================================================
-# AWSSecretResolver.write (prefix ルーティング + 修正2)
+# AWSSecretResolver.write (prefix ルーティング)
 # MCDC:
 #   条件: prefix (secretsmanager / parameterstore / kms_encrypt / 不明)
 # ======================================================================
@@ -614,8 +613,8 @@ class TestAWSSecretResolverWrite:
         return _make_aws_resolver()
 
     def test_unsupported_prefix_raises_secret_write_error(self, r):
-        """修正2: 不明プレフィックス → SecretWriteError
-        修正前は logger.warning + return None のみで失敗を検知できなかった"""
+        """不明プレフィックス → SecretWriteError
+        logger.warning + return None のみで失敗を検知できなかった"""
         with pytest.raises(SecretWriteError, match="unsupported reference format"):
             r.write("unsupported://ref", "value")
 

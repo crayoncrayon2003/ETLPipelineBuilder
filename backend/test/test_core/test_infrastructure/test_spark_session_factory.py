@@ -55,7 +55,7 @@ class TestSparkSessionFactory:
     #   条件B: ロック内 _spark_session is not None  (double-checked locking)
     #   条件C: is_running_on_aws()
     #   条件D: PYSPARK_PYTHON が既に設定されているか  (setdefault)
-    #   条件E: JAVA_HOME が既に設定されているか  (setdefault)
+    #   ※ JAVA_HOME は spark_session_factory.py が設定しないため条件Eは削除
     # =========================================================
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
@@ -212,8 +212,8 @@ class TestSparkSessionFactory:
     # =========================================================
     # 環境変数の setdefault 動作確認
     # MCDC:
-    #   条件D: PYSPARK_PYTHON が既に設定されているか
-    #   条件E: JAVA_HOME が既に設定されているか
+    #   条件D: PYSPARK_PYTHON が既に設定されているか (setdefault)
+    #   ※ JAVA_HOME は spark_session_factory.py が設定しないため条件Eは削除
     # =========================================================
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
@@ -222,15 +222,19 @@ class TestSparkSessionFactory:
     def test_env_vars_set_when_not_present(
         self, mock_conf_cls, mock_session_cls, mock_is_aws, clean_env
     ):
-        """条件D=False, E=False: 環境変数が未設定のときデフォルト値がセットされる"""
+        """条件D=False: 環境変数が未設定のとき sys.executable がセットされる
+        PYSPARK_PYTHON にハードコードした Linux パスではなく sys.executable を使うため
+        期待値は sys.executable であることを確認する。
+        JAVA_HOME は setdefault を削除したため設定されない (None のままが正しい)。"""
         mock_is_aws.return_value = False
         _make_local_mocks(mock_conf_cls, mock_session_cls)
 
         SparkSessionFactory.get_spark_session()
 
-        assert os.environ.get("PYSPARK_PYTHON") == "/usr/bin/python3.9"
-        assert os.environ.get("PYSPARK_DRIVER_PYTHON") == "/usr/bin/python3.9"
-        assert os.environ.get("JAVA_HOME") == "/usr/lib/jvm/java-11-openjdk-amd64"
+        assert os.environ.get("PYSPARK_PYTHON") == sys.executable
+        assert os.environ.get("PYSPARK_DRIVER_PYTHON") == sys.executable
+        # JAVA_HOME は spark_session_factory.py が設定しない (PATH の java を使う)
+        assert os.environ.get("JAVA_HOME") is None
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     @patch("pyspark.sql.SparkSession")
@@ -255,21 +259,19 @@ class TestSparkSessionFactory:
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     @patch("pyspark.sql.SparkSession")
     @patch("pyspark.SparkConf")
-    def test_existing_java_home_is_not_overwritten(
-        self, mock_conf_cls, mock_session_cls, mock_is_aws, save_restore_env
+    def test_java_home_is_never_set_by_factory(
+        self, mock_conf_cls, mock_session_cls, mock_is_aws, clean_env
     ):
-        """条件E=True: JAVA_HOME が既に設定されているとき上書きしない
-        MCDC: E=True の独立した影響 (Windows既存設定の保護)"""
+        """spark_session_factory.py は JAVA_HOME を一切設定しない。
+        JAVA_HOME は PATH の java を使うため、コードからの設定は不要かつ
+        Windows ではハードコードした Linux パスで壊れるリスクがある。
+        事前に未設定の状態で実行後も None のままであることを確認する。"""
         mock_is_aws.return_value = False
         _make_local_mocks(mock_conf_cls, mock_session_cls)
 
-        os.environ["JAVA_HOME"] = "C:/Program Files/Java/jdk-11"
-        os.environ.pop("PYSPARK_PYTHON", None)
-        os.environ.pop("PYSPARK_DRIVER_PYTHON", None)
-
         SparkSessionFactory.get_spark_session()
 
-        assert os.environ["JAVA_HOME"] == "C:/Program Files/Java/jdk-11"
+        assert os.environ.get("JAVA_HOME") is None
 
     # =========================================================
     # Spark設定値の確認
@@ -305,7 +307,7 @@ class TestSparkSessionFactory:
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     def test_stop_spark_session_on_aws_is_noop(self, mock_is_aws):
-        """条件F=True: AWS上では完全にno-op (修正3)
+        """条件F=True: AWS上では完全にno-op
         _spark_session が変更されず stop() も呼ばれない"""
         mock_is_aws.return_value = True
         mock_spark = Mock()
@@ -333,7 +335,7 @@ class TestSparkSessionFactory:
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     def test_stop_spark_session_also_resets_glue_context(self, mock_is_aws):
-        """条件F=False, G=True: _glue_context もリセットされる (修正2)
+        """条件F=False, G=True: _glue_context もリセットされる
         MCDC: stop後の _glue_context=None が独立して影響する"""
         mock_is_aws.return_value = False
         mock_spark = Mock()
@@ -344,7 +346,7 @@ class TestSparkSessionFactory:
         SparkSessionFactory.stop_spark_session()
 
         assert SparkSessionFactory._spark_session is None
-        assert SparkSessionFactory._glue_context is None  # 修正2の確認
+        assert SparkSessionFactory._glue_context is None
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     def test_stop_spark_session_when_no_session(self, mock_is_aws):
@@ -365,8 +367,7 @@ class TestSparkSessionFactory:
 
     @patch("core.infrastructure.spark_session_factory.is_running_on_aws")
     def test_get_glue_context_on_local_raises_runtime_error(self, mock_is_aws):
-        """条件H=False: ローカル環境では RuntimeError を raise (修正6)
-        修正前は None を返していたが、明確なエラーメッセージを出すよう変更"""
+        """条件H=False: ローカル環境では RuntimeError を raise"""
         mock_is_aws.return_value = False
 
         with pytest.raises(RuntimeError, match="GlueContext is only available on AWS Glue"):
