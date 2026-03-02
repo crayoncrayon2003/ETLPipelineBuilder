@@ -11,9 +11,17 @@ logger = setup_logger(__name__)
 
 class StepExecutor:
     """
-    inputs のキー名はそのまま plugin の params キー名として使われます。
-    例: inputs={"input_path": container} → params["input_path"] = "/path/to/file"
-    キー名は各 plugin の get_parameters_schema() で定義された名前に合わせてください。
+    Executes a single pipeline step by delegating to the appropriate plugin.
+
+    inputs の DataContainer はパスに展開せず、そのまま plugin の
+    run(input_data, container) に渡します。
+    params のパス (input_path / output_path 等) は呼び出し元が
+    コンフィグまたはコードで明示的に指定してください。
+
+    設計方針:
+        - inputs の DataContainer → plugin の run(input_data) 引数で受け取る
+        - params のキー名/パス形式 → 呼び出し元が責任を持つ
+        - StepExecutor はパスの補完・変換を一切行わない
     """
 
     def execute_step(
@@ -27,8 +35,7 @@ class StepExecutor:
         Parameters:
         - step_config: Dict containing 'plugin', 'params', and optionally 'name'
         - inputs: Optional dictionary of input DataContainer objects.
-                  Each key must match the parameter name defined in the plugin schema.
-                  e.g. {"input_path": container}
+                  DataContainer はそのまま plugin に渡される。パスの展開は行わない。
 
         Returns:
         - DataContainer output from the plugin execution
@@ -56,24 +63,9 @@ class StepExecutor:
         try:
             resolved_params = copy.deepcopy(params)
 
-            if inputs:
-                for input_name, container in inputs.items():
-                    if container:
-                        file_paths = container.get_file_paths()
-                        logger.debug(
-                            f"[StepExecutor] Input '{input_name}' file paths: {file_paths}"
-                        )
-
-                        if len(file_paths) == 0:
-                            logger.warning(
-                                f"[StepExecutor] Input '{input_name}' has no file paths. "
-                                f"'{input_name}' will not be set in params."
-                            )
-                        elif len(file_paths) == 1:
-                            resolved_params[input_name] = file_paths[0]
-                        else:
-                            resolved_params[input_name] = file_paths
-
+            # inputs の DataContainer をそのまま plugin に渡す。
+            # パス展開 (file_paths[0] を resolved_params に設定する処理) は行わない。
+            # input_path / output_path 等のパス指定は呼び出し元が params で明示すること。
             safe_inputs = {
                 k: copy.deepcopy(v) for k, v in (inputs or {}).items()
             }

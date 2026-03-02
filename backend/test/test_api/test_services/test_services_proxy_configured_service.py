@@ -33,7 +33,7 @@ def _make_error_container(errors=None):
     """ERROR ステータスの DataContainer モックを返すヘルパー"""
     c = MagicMock(spec=DataContainer)
     c.status = DataContainerStatus.ERROR
-    # 修正: `errors or [...]` だと errors=[] (空リスト) が falsy で
+    # `errors or [...]` だと errors=[] (空リスト) が falsy で
     # デフォルト値に置き換わってしまうため is not None で判定する
     c.errors = errors if errors is not None else ["something went wrong"]
     return c

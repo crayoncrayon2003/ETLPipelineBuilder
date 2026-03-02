@@ -9,10 +9,11 @@ from core.pipeline.step_executor import StepExecutor
 # ヘルパー
 # ======================================================================
 
-def _make_container(*file_paths: str) -> Mock:
-    """指定したファイルパスを返す DataContainer モックを作成する"""
-    c = Mock(spec=DataContainer)
-    c.get_file_paths.return_value = list(file_paths)
+def _make_container(*file_paths: str) -> DataContainer:
+    """指定したファイルパスを持つ DataContainer を作成する"""
+    c = DataContainer()
+    for p in file_paths:
+        c.add_file_path(p)
     return c
 
 
@@ -41,24 +42,15 @@ PATCH_TARGET = 'core.plugin_manager.manager.framework_manager.call_plugin_execut
 #     B=True  (None)  → {} として扱う
 #     B=False (dict)  → deepcopy して使う
 #
-#   条件C: inputs が truthy か
-#     C=True  → ファイルパスを resolved_params に展開
-#     C=False → 展開しない
+#   条件C: inputs が None か空 dict か
+#     C=False (None/{}) → safe_inputs={} として渡す
+#     C=True  (dict あり) → deepcopy して safe_inputs として渡す
 #
-#   条件D: container が truthy か (inputs の各値)
-#     D=True  → get_file_paths() を呼ぶ
-#     D=False → スキップ
-#
-#   条件E: len(file_paths) == 0
-#     E=True  → warning ログのみ、params に追加しない
-#
-#   条件F: len(file_paths) == 1
-#     F=True  → resolved_params[input_name] = file_paths[0]  (文字列)
-#     F=False (>1) → resolved_params[input_name] = file_paths (リスト)
-#
-#   【仕様】inputs のキー名は変換せずそのまま params キーになる。
-#           inputs={"input_path": container} → params["input_path"] = "/path/to/file"
-#           inputs を deepcopy して safe_inputs として call_plugin_execute に渡す。
+#   【仕様】
+#     inputs の DataContainer はパスに展開しない。
+#     resolved_params への注入は行わない。
+#     inputs は deepcopy して safe_inputs として call_plugin_execute に渡す。
+#     params のパス指定は呼び出し元が明示的に行う責任を持つ。
 # ======================================================================
 class TestStepExecutor:
 
@@ -119,156 +111,93 @@ class TestStepExecutor:
         assert nested == {'nested': {'key': 'original'}}
 
     # ------------------------------------------------------------------
-    # 条件C: inputs なし
+    # 条件C: inputs なし → safe_inputs={} で渡る
     # ------------------------------------------------------------------
 
-    def test_c_false_no_inputs(self, executor, mock_output):
-        """C=False: inputs=None → params はそのまま"""
+    def test_c_false_no_inputs_params_passed_as_is(self, executor, mock_output):
+        """C=False: inputs=None → params はそのまま、safe_inputs={} で渡る"""
         step_config = {'plugin': 'test_plugin', 'params': {'key': 'val'}}
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
             result = executor.execute_step(step_config, inputs=None)
         assert result == mock_output
         assert _called_params(mock_call) == {'key': 'val'}
+        assert _called_inputs(mock_call) == {}
 
     def test_c_false_empty_inputs_dict(self, executor, mock_output):
-        """C=False: inputs={} → params はそのまま"""
+        """C=False: inputs={} → params はそのまま、safe_inputs={} で渡る"""
         step_config = {'plugin': 'test_plugin', 'params': {}}
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
             executor.execute_step(step_config, inputs={})
         assert _called_params(mock_call) == {}
+        assert _called_inputs(mock_call) == {}
 
     # ------------------------------------------------------------------
-    # 条件D: container が None / falsy のとき
+    # 【新仕様】inputs の DataContainer は params に展開しない
     # ------------------------------------------------------------------
 
-    def test_d_false_none_container_skipped(self, executor, mock_output):
-        """D=False: inputs の値が None → スキップされ params に追加されない"""
-        step_config = {'plugin': 'test_plugin', 'params': {}}
-        with patch(PATCH_TARGET) as mock_call:
-            mock_call.return_value = mock_output
-            executor.execute_step(step_config, inputs={'input_path': None})
-        assert 'input_path' not in _called_params(mock_call)
-
-    # ------------------------------------------------------------------
-    # 条件E: file_paths が空
-    # ------------------------------------------------------------------
-
-    def test_e_true_empty_file_paths_not_added_to_params(self, executor, mock_output):
-        """E=True: file_paths=[] → warning のみ、params に追加されない"""
-        step_config = {'plugin': 'test_plugin', 'params': {}}
-        container = _make_container()   # パスなし
-        with patch(PATCH_TARGET) as mock_call:
-            mock_call.return_value = mock_output
-            executor.execute_step(step_config, inputs={'input_path': container})
-        assert 'input_path' not in _called_params(mock_call)
-
-    # ------------------------------------------------------------------
-    # 条件F: file_paths が 1件 vs 複数件
-    # 【仕様】inputs のキー名 = params のキー名 (変換なし)
-    # ------------------------------------------------------------------
-
-    def test_f_true_single_file_path_set_as_string(self, executor, mock_output):
-        """F=True: file_paths が 1件 → params[input_name] に文字列でセットされる
-        【仕様】inputs={"input_path": container} → params["input_path"] = "/path/to/file.csv"
-        """
+    def test_inputs_container_not_expanded_into_params(self, executor, mock_output):
+        """inputs に DataContainer を渡しても resolved_params には展開されない。
+        params のパス指定は呼び出し元が明示的に行う責任を持つ。"""
         step_config = {
             'plugin': 'test_plugin',
-            'params': {'param1': 'value1'},
-            'name': 'test_step'
+            'params': {'output_path': '/out/result.parquet'},
         }
-        container = _make_container('/path/to/file.csv')
-        with patch(PATCH_TARGET) as mock_call:
-            mock_call.return_value = mock_output
-            result = executor.execute_step(step_config, inputs={'input_path': container})
-
-        assert result == mock_output
-        assert _called_params(mock_call) == {
-            'param1': 'value1',
-            'input_path': '/path/to/file.csv',   # キー名はそのまま
-        }
-
-    def test_f_false_multiple_file_paths_set_as_list(self, executor, mock_output):
-        """F=False: file_paths が複数 → params[input_name] にリストでセットされる"""
-        step_config = {'plugin': 'test_plugin', 'params': {}}
-        file_paths = ['/path/to/file1.csv', '/path/to/file2.csv']
-        container = _make_container(*file_paths)
+        container = _make_container('/path/to/input.csv')
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
             executor.execute_step(step_config, inputs={'input_path': container})
-
-        assert _called_params(mock_call) == {'input_path': file_paths}
-
-    # ------------------------------------------------------------------
-    # キー名がそのまま params に反映されること (複数・カスタム名)
-    # ------------------------------------------------------------------
-
-    def test_custom_input_name_used_as_param_key(self, executor, mock_output):
-        """inputs のキー名がそのまま params キーになる (変換・サフィックス付加なし)
-        旧仕様: inputs["custom_input"] → params["custom_input_path"]  ← 廃止
-        新仕様: inputs["custom_input"] → params["custom_input"]
-        """
-        step_config = {'plugin': 'test_plugin', 'params': {}}
-        container = _make_container('/path/to/custom.csv')
-        with patch(PATCH_TARGET) as mock_call:
-            mock_call.return_value = mock_output
-            executor.execute_step(step_config, inputs={'custom_input': container})
-
-        assert _called_params(mock_call) == {'custom_input': '/path/to/custom.csv'}
-
-    def test_multiple_inputs_each_key_used_as_param_key(self, executor, mock_output):
-        """複数 inputs: それぞれのキー名がそのまま params キーになる"""
-        step_config = {'plugin': 'test_plugin', 'params': {'param1': 'value1'}}
-        container1 = _make_container('/path/to/input1.csv')
-        container2 = _make_container('/path/to/input2.csv')
-        inputs = {
-            'input_path':     container1,
-            'reference_path': container2,
-        }
-        with patch(PATCH_TARGET) as mock_call:
-            mock_call.return_value = mock_output
-            executor.execute_step(step_config, inputs=inputs)
 
         called = _called_params(mock_call)
-        assert called['param1'] == 'value1'
-        assert called['input_path'] == '/path/to/input1.csv'
-        assert called['reference_path'] == '/path/to/input2.csv'
+        # input_path は params に展開されない
+        assert 'input_path' not in called
+        # params に明示した値はそのまま渡る
+        assert called['output_path'] == '/out/result.parquet'
 
-    def test_input_key_overwrites_same_named_param(self, executor, mock_output):
-        """inputs のキーと params のキーが同名の場合、inputs の値で上書きされる
-        例: params={"input_path": "/original"}, inputs={"input_path": container}
-            → params["input_path"] = container の file_paths[0]
-        """
-        step_config = {
-            'plugin': 'test_plugin',
-            'params': {'input_path': '/original/path.csv'},
-        }
-        container = _make_container('/new/path.csv')
+    def test_inputs_container_not_expanded_multiple_file_paths(self, executor, mock_output):
+        """複数 file_paths の DataContainer も params に展開されない"""
+        step_config = {'plugin': 'test_plugin', 'params': {}}
+        container = _make_container('/path/file1.csv', '/path/file2.csv')
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
             executor.execute_step(step_config, inputs={'input_path': container})
 
-        assert _called_params(mock_call)['input_path'] == '/new/path.csv'
+        assert 'input_path' not in _called_params(mock_call)
+
+    def test_explicit_params_used_as_is_regardless_of_inputs(self, executor, mock_output):
+        """params に明示した input_path は inputs があっても上書きされない。
+        呼び出し元が params で指定した値が常に使われる。"""
+        step_config = {
+            'plugin': 'test_plugin',
+            'params': {'input_path': '/explicit/path.csv'},
+        }
+        container = _make_container('/container/path.csv')
+        with patch(PATCH_TARGET) as mock_call:
+            mock_call.return_value = mock_output
+            executor.execute_step(step_config, inputs={'input_path': container})
+
+        # params の明示値が保持される (inputs で上書きされない)
+        assert _called_params(mock_call)['input_path'] == '/explicit/path.csv'
 
     # ------------------------------------------------------------------
     # safe_inputs (deepcopy) の検証
-    # inputs は deepcopy されて call_plugin_execute に渡るため
-    # 元オブジェクトとの同一性ではなく内容で比較する
+    # inputs は DataContainer のまま deepcopy されて渡る
     # ------------------------------------------------------------------
 
-    def test_safe_inputs_passed_to_call_plugin_execute(self, executor, mock_output):
-        """inputs は deepcopy されて渡るため、元オブジェクトとは別インスタンス
-        内容（file_paths）は等しい"""
+    def test_safe_inputs_passed_as_container_not_path(self, executor, mock_output):
+        """inputs は DataContainer のまま deepcopy されて call_plugin_execute に渡る。
+        パス文字列ではなく DataContainer インスタンスが safe_inputs の値になる。"""
         step_config = {'plugin': 'test_plugin', 'params': {}}
-        original_dc = DataContainer()
-        original_dc.add_file_path('/path/to/file.csv')
+        original_dc = _make_container('/path/to/file.csv')
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
             executor.execute_step(step_config, inputs={'input_path': original_dc})
 
         safe_inputs = _called_inputs(mock_call)
-        # 別インスタンス (deepcopy)
+        # DataContainer インスタンスとして渡る
+        assert isinstance(safe_inputs['input_path'], DataContainer)
+        # deepcopy のため別インスタンス
         assert safe_inputs['input_path'] is not original_dc
         # 内容は同じ
         assert safe_inputs['input_path'].get_file_paths() == ['/path/to/file.csv']
@@ -281,21 +210,38 @@ class TestStepExecutor:
         original_dc.add_file_path('/path/to/file.csv')
 
         def mutating_call(**kwargs):
-            # plugin が safe_inputs を変更しても元 container は保護される
             kwargs['inputs']['input_path'].add_error('mutated')
             return mock_output
 
         with patch(PATCH_TARGET, side_effect=mutating_call):
             executor.execute_step(step_config, inputs={'input_path': original_dc})
 
-        assert original_dc.errors == []   # 元は変更されていない
+        assert original_dc.errors == []
+
+    def test_multiple_inputs_all_passed_as_containers(self, executor, mock_output):
+        """複数 inputs が全て DataContainer のまま safe_inputs に渡る"""
+        step_config = {'plugin': 'test_plugin', 'params': {}}
+        container1 = _make_container('/path/input1.csv')
+        container2 = _make_container('/path/input2.parquet')
+        with patch(PATCH_TARGET) as mock_call:
+            mock_call.return_value = mock_output
+            executor.execute_step(
+                step_config,
+                inputs={'input_path': container1, 'reference_path': container2}
+            )
+
+        safe_inputs = _called_inputs(mock_call)
+        assert isinstance(safe_inputs['input_path'], DataContainer)
+        assert isinstance(safe_inputs['reference_path'], DataContainer)
+        assert safe_inputs['input_path'].get_file_paths() == ['/path/input1.csv']
+        assert safe_inputs['reference_path'].get_file_paths() == ['/path/input2.parquet']
 
     # ------------------------------------------------------------------
     # step_name フォールバック
     # ------------------------------------------------------------------
 
     def test_step_name_defaults_to_plugin_name(self, executor, mock_output):
-        """'name' キーがない場合は plugin_name が step_name になる (ログ確認)"""
+        """'name' キーがない場合は plugin_name が step_name になる"""
         step_config = {'plugin': 'my_plugin', 'params': {}}
         with patch(PATCH_TARGET) as mock_call:
             mock_call.return_value = mock_output
