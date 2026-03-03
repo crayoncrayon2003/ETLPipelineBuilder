@@ -49,7 +49,7 @@ class TestSubmitNodeTask:
             step_name="node2",
             plugin_name="plugin2",
             params={},
-            inputs={"input1": mock_future.result()}  # .result() で解決された値
+            inputs={"input1": mock_future}  # フューチャーをそのまま渡す（.result()廃止）
         )
         assert future == mock_future
 

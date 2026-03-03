@@ -1,6 +1,6 @@
 import os
 import pytest
-from scripts.core.infrastructure.env_detector import is_running_on_aws
+from core.infrastructure.env_detector import is_running_on_aws
 
 
 class TestIsRunningOnAws:

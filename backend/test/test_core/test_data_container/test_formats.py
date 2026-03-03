@@ -1,7 +1,7 @@
 import os
 import pathlib
 import pytest
-from scripts.core.data_container.formats import SupportedFormats
+from core.data_container.formats import SupportedFormats
 
 
 # ======================================================================

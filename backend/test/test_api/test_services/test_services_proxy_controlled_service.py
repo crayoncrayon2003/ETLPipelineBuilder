@@ -95,7 +95,7 @@ class TestProcessControlledRequest:
         assert result["primary_file"] == "/mock/path/file2.csv"
 
     # ------------------------------------------------------------------
-    # 変更1: steps が空のとき ValueError
+    # steps が空のとき ValueError
     # ------------------------------------------------------------------
     def test_empty_steps_raises_value_error(self):
         """steps=[] のとき ValueError を raise する"""
@@ -136,7 +136,7 @@ class TestProcessControlledRequest:
             )
 
     # ------------------------------------------------------------------
-    # 変更3: try/finally で一時ファイルが必ず削除される
+    # try/finally で一時ファイルが必ず削除される
     # ------------------------------------------------------------------
     @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
     def test_temp_file_deleted_on_success(self, mock_execute_step):

@@ -4,9 +4,9 @@ import pandas as pd
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, call
-from scripts.core.infrastructure.storage_adapter import StorageAdapter, storage_adapter
-from scripts.core.infrastructure.storage_path_utils import is_local_path, is_remote_path
-from scripts.core.data_container.formats import SupportedFormats
+from core.infrastructure.storage_adapter import StorageAdapter, storage_adapter
+from core.infrastructure.storage_path_utils import is_local_path, is_remote_path
+from core.data_container.formats import SupportedFormats
 
 
 class TestStorageAdapter:
@@ -905,13 +905,13 @@ class TestStorageAdapter:
     def test_s3fs_is_not_imported_at_module_level(self):
         """s3fsがモジュールレベルでimportされていないことを確認
         Windows環境でs3fs未インストール時のクラッシュ防止"""
-        import scripts.core.infrastructure.storage_adapter as mod
+        import core.infrastructure.storage_adapter as mod
         assert "s3fs" not in dir(mod) or not hasattr(mod, "s3fs")
 
     def test_botocore_is_not_imported_at_module_level(self):
         """botocore.exceptionsがモジュールレベルでimportされていないことを確認
         Windows環境でboto3未インストール時のクラッシュ防止"""
-        import scripts.core.infrastructure.storage_adapter as mod
+        import core.infrastructure.storage_adapter as mod
         assert not hasattr(mod, "botocore")
 
     def test_s3fs_lazy_import_in_read_text(self, sa):

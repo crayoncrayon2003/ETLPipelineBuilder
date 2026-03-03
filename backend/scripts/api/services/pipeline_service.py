@@ -59,22 +59,23 @@ def _submit_node_task(
 ):
     """
     Recursively submits a node's task to Prefect, resolving paths correctly.
+
     """
     if node_id in node_results_cache:
         return node_results_cache[node_id]
 
     node_def = nodes_map[node_id]
 
-    upstream_inputs: Dict[str, Optional[DataContainer]] = {}
+    upstream_inputs: Dict[str, Any] = {}
     for edge in edges:
         if edge.target_node_id == node_id:
             source_future = _submit_node_task(
                 edge.source_node_id, nodes_map, edges, project_root, node_results_cache
             )
-            if hasattr(source_future, "result"):
-                upstream_inputs[edge.target_input_name] = source_future.result()
-            else:
-                upstream_inputs[edge.target_input_name] = source_future
+            # フューチャーをそのまま渡す。
+            # Prefect が依存関係を検出し、上流タスク完了後に本タスクを実行する。
+            # .result() で同期待機すると並列実行の恩恵が得られないため廃止。
+            upstream_inputs[edge.target_input_name] = source_future
 
     params = node_def.params.copy()
     for key, value in params.items():
@@ -95,13 +96,19 @@ def _submit_node_task(
 def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root: str):
     """
     The main service entry point. Dynamically constructs and runs a Prefect flow.
+
     """
     @flow(name=pipeline_def.name)
     def dynamic_etl_flow():
         logger.info(f"Starting dynamically generated flow: {pipeline_def.name}")
         node_results_cache: Dict[str, Any] = {}
         nodes_map = {node.id: node for node in pipeline_def.nodes}
-        for node_id in nodes_map:
+
+        # どのエッジのターゲットにもなっていないノード = シンクノード（末端）
+        target_node_ids = {edge.target_node_id for edge in pipeline_def.edges}
+        sink_node_ids = [nid for nid in nodes_map if nid not in target_node_ids]
+
+        for node_id in sink_node_ids:
             _submit_node_task(
                 node_id, nodes_map, pipeline_def.edges, project_root, node_results_cache
             )

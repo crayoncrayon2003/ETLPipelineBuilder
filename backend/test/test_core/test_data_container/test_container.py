@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from pathlib import Path
-from scripts.core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer, DataContainerStatus
 
 
 class TestDataContainer:

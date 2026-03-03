@@ -105,7 +105,7 @@ class TestProcessConfiguredRequest:
         assert result["primary_file"] == container_node2.get_primary_file_path()
 
     # ------------------------------------------------------------------
-    # 変更3: nodes が空のとき ValueError (早期バリデーション)
+    # nodes が空のとき ValueError (早期バリデーション)
     # ------------------------------------------------------------------
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
     def test_empty_nodes_raises_value_error(self, mock_read_text):
@@ -116,7 +116,7 @@ class TestProcessConfiguredRequest:
             process_configured_request(**COMMON_ARGS)
 
     # ------------------------------------------------------------------
-    # 変更4: final_container.status == ERROR のとき RuntimeError
+    # final_container.status == ERROR のとき RuntimeError
     # ------------------------------------------------------------------
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
     @patch("api.services.proxy_configured_service.StepExecutor.execute_step")
@@ -143,7 +143,7 @@ class TestProcessConfiguredRequest:
             process_configured_request(**COMMON_ARGS)
 
     # ------------------------------------------------------------------
-    # 変更5: execute_step が None を返したとき RuntimeError
+    # execute_step が None を返したとき RuntimeError
     # ------------------------------------------------------------------
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
     @patch("api.services.proxy_configured_service.StepExecutor.execute_step")
@@ -158,7 +158,7 @@ class TestProcessConfiguredRequest:
             process_configured_request(**COMMON_ARGS)
 
     # ------------------------------------------------------------------
-    # 変更2: try/finally で一時ファイルが必ず削除される
+    # try/finally で一時ファイルが必ず削除される
     # ------------------------------------------------------------------
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
     @patch("api.services.proxy_configured_service.StepExecutor.execute_step")
@@ -208,7 +208,7 @@ class TestProcessConfiguredRequest:
         assert not os.path.exists(created_paths[0]), "例外時も一時ファイルが削除されていない"
 
     # ------------------------------------------------------------------
-    # 変更1: リクエストごとにキャッシュが独立している (並行処理安全性)
+    # リクエストごとにキャッシュが独立している (並行処理安全性)
     # ------------------------------------------------------------------
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
     @patch("api.services.proxy_configured_service.StepExecutor.execute_step")

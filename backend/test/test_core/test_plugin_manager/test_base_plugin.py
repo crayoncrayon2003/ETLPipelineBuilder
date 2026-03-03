@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from core.data_container.container import DataContainer, DataContainerStatus
-from scripts.core.plugin_manager.base_plugin import BasePlugin
+from core.plugin_manager.base_plugin import BasePlugin
 
 
 # ======================================================================

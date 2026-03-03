@@ -3,6 +3,6 @@ from .formats import SupportedFormats
 
 __all__ = [
     'DataContainer',
-    'DataContainerStatus'
+    'DataContainerStatus',
     'SupportedFormats',
 ]

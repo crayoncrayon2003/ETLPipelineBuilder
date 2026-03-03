@@ -1,5 +1,5 @@
 import pytest
-from scripts.core.infrastructure.storage_path_utils import (
+from core.infrastructure.storage_path_utils import (
     get_scheme,
     is_remote_path,
     is_local_path,
