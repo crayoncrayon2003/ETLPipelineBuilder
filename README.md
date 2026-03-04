@@ -127,17 +127,17 @@ Selecting a plugin will display the plugin parameters on the right side.
 
 #### Node1 : from_http
 * Source URL        : http://localhost:8080/device_data.csv
-* Output File Path  : ./test/data/Step1/device_data.csv
+* Output File Path  : ../../test/data/Step1/device_data.csv
 
 #### Node2 : with_duckdb
-* Source File Path  : ./test/data/Step1/device_data.csv
-* Output File Path  : ./test/data/Step3/run_pipeline_gui.csv
-* SQL    File Path  : ./test/data/Step2/step2_with_duckdb.sql
+* Source File Path : ../../test/data/Step1/device_data.csv
+* Output File Path : ../../test/data/Step3/run_pipeline_gui.parquet
+* SQL    File Path : ../../test/data/Step2/step2_with_duckdb.sql
 
 #### Node3 : with_jinja2
-* Source File Path : ./test/data/Step3/run_pipeline_gui.csv
-* Output File Path : ./test/data/Step5/run_pipeline_gui.json
-* j2     File Path : ./test/data/Step4/step4.j2
+* Source File Path : ../../test/data/Step3/run_pipeline_gui.parquet
+* Output File Path : ../../test/data/Step5/run_pipeline_gui.json
+* j2     File Path : ../../test/data/Step4/step4.j2
 
 #### 3.3.2.2. Run Test
 Testing the pipeline with the "Run Test".

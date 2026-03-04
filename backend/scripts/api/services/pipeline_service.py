@@ -46,8 +46,10 @@ def _normalize_path(path_str: str, project_root: str) -> str:
         path_remainder = normalized_str[len(win_match.group(0)):]
         return f"/mnt/{drive}/{path_remainder}"
     if not os.path.isabs(normalized_str):
-        return os.path.join(project_root, normalized_str)
-    return normalized_str
+        # return os.path.join(project_root, normalized_str)
+        return os.path.normpath(os.path.join(project_root, normalized_str))
+    # return normalized_str
+    return os.path.normpath(normalized_str)
 
 
 def _submit_node_task(
