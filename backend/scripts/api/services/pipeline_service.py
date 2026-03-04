@@ -59,7 +59,6 @@ def _submit_node_task(
 ):
     """
     Recursively submits a node's task to Prefect, resolving paths correctly.
-
     """
     if node_id in node_results_cache:
         return node_results_cache[node_id]
@@ -72,7 +71,6 @@ def _submit_node_task(
             source_future = _submit_node_task(
                 edge.source_node_id, nodes_map, edges, project_root, node_results_cache
             )
-
             upstream_inputs["input_data"] = source_future
 
     params = node_def.params.copy()
@@ -94,7 +92,6 @@ def _submit_node_task(
 def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root: str):
     """
     The main service entry point. Dynamically constructs and runs a Prefect flow.
-
     """
     @flow(name=pipeline_def.name)
     def dynamic_etl_flow():
@@ -102,9 +99,8 @@ def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root:
         node_results_cache: Dict[str, Any] = {}
         nodes_map = {node.id: node for node in pipeline_def.nodes}
 
-        # どのエッジのターゲットにもなっていないノード = シンクノード（末端）
-        target_node_ids = {edge.target_node_id for edge in pipeline_def.edges}
-        sink_node_ids = [nid for nid in nodes_map if nid not in target_node_ids]
+        source_node_ids = {edge.source_node_id for edge in pipeline_def.edges}
+        sink_node_ids = [nid for nid in nodes_map if nid not in source_node_ids]
 
         for node_id in sink_node_ids:
             _submit_node_task(

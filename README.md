@@ -74,11 +74,11 @@ pip install -e .
 ### 3.1.2. Run API Server for FrontEnd App
 Start API Server of BuckEnd App
 ```
-python ./scripts/api/main.py
+PYTHONPATH=scripts python scripts/api/main.py
 ```
 or
 ```
-uvicorn api.main:app --reload
+PYTHONPATH=scripts uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 check swagger
@@ -388,7 +388,7 @@ Runs as a persistent server that dynamically constructs a pipeline based on clie
 
 start server
 ```
-python ./scripts/api/main.py
+PYTHONPATH=scripts python scripts/api/main.py
 ```
 
 example of a client request
@@ -401,7 +401,7 @@ server configuration file is located in backend/scripts/config.
 
 start server
 ```
-python ./scripts/api/main.py
+PYTHONPATH=scripts python scripts/api/main.py
 ```
 
 example of a client request
