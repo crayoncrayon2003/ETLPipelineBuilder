@@ -37,11 +37,6 @@ class PipelineEdge(BaseModel):
         description="The 'id' of the target node to which the edge connects.",
         examples=["node-validator-quality-1"]
     )
-    target_input_name: str = Field(
-        ...,
-        description="The name of the input on the target node that will receive the source node's output, e.g., 'input_data'.",
-        examples=["input_data"]
-    )
 
 class PipelineDefinition(BaseModel):
     """

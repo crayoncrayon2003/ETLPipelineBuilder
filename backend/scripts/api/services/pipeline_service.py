@@ -72,10 +72,8 @@ def _submit_node_task(
             source_future = _submit_node_task(
                 edge.source_node_id, nodes_map, edges, project_root, node_results_cache
             )
-            # フューチャーをそのまま渡す。
-            # Prefect が依存関係を検出し、上流タスク完了後に本タスクを実行する。
-            # .result() で同期待機すると並列実行の恩恵が得られないため廃止。
-            upstream_inputs[edge.target_input_name] = source_future
+
+            upstream_inputs["input_data"] = source_future
 
     params = node_def.params.copy()
     for key, value in params.items():

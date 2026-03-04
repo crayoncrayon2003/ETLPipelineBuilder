@@ -54,13 +54,11 @@
   "edges": [
     {
       "source_node_id": "node-from_http_with_basic_auth-1755308197399",
-      "target_node_id": "node-with_duckdb-1755308214657",
-      "target_input_name": "input_data"
+      "target_node_id": "node-with_duckdb-1755308214657"
     },
     {
       "source_node_id": "node-with_duckdb-1755308214657",
-      "target_node_id": "node-with_jinja2-1755308211580",
-      "target_input_name": "input_data"
+      "target_node_id": "node-with_jinja2-1755308211580"
     }
   ]
 }

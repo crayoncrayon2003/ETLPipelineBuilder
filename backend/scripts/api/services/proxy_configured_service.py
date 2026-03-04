@@ -35,6 +35,8 @@ def process_configured_request(
         node_results_cache: Dict[str, Optional[DataContainer]] = {}
         nodes_map = {node.id: node for node in pipeline_def.nodes}
 
+        step_executor = StepExecutor()
+
         def _submit_node(node_id: str) -> Optional[DataContainer]:
             if node_id in node_results_cache:
                 return node_results_cache[node_id]
@@ -43,7 +45,7 @@ def process_configured_request(
             for edge in pipeline_def.edges:
                 if edge.target_node_id == node_id:
                     source_result = _submit_node(edge.source_node_id)
-                    upstream_inputs[edge.target_input_name] = source_result
+                    upstream_inputs["input_data"] = source_result
 
             params = node_def.params.copy()
             for key, value in params.items():
@@ -51,15 +53,23 @@ def process_configured_request(
                     params[key] = normalize_path(value, project_root or os.getcwd())
 
             inputs = upstream_inputs or {"input_data": initial_container}
-            result = StepExecutor().execute_step(
+
+            result = step_executor.execute_step(
                 {"name": node_def.id, "plugin": node_def.plugin, "params": params},
                 inputs=inputs
             )
             node_results_cache[node_id] = result
             return result
 
-        final_node_id = pipeline_def.nodes[-1].id
-        final_container = _submit_node(final_node_id)
+        source_node_ids = {edge.source_node_id for edge in pipeline_def.edges}
+        sink_node_ids = [nid for nid in nodes_map if nid not in source_node_ids]
+
+        if not sink_node_ids:
+            raise ValueError("No sink node found. Pipeline may have a circular dependency.")
+
+        final_container = None
+        for sink_node_id in sink_node_ids:
+            final_container = _submit_node(sink_node_id)
 
         if final_container is None:
             raise RuntimeError("Pipeline execution returned no result.")

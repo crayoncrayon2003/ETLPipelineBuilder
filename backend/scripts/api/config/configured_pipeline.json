@@ -39,18 +39,15 @@
   "edges": [
     {
       "source_node_id": "step1_save",
-      "target_node_id": "step2_duckdb",
-      "target_input_name": "input_path"
+      "target_node_id": "step2_duckdb"
     },
     {
       "source_node_id": "step2_duckdb",
-      "target_node_id": "step3_jinja2",
-      "target_input_name": "input_path"
+      "target_node_id": "step3_jinja2"
     },
     {
       "source_node_id": "step3_jinja2",
-      "target_node_id": "step4_http",
-      "target_input_name": "input_path"
+      "target_node_id": "step4_http"
     }
   ]
 }

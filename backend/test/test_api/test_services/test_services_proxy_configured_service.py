@@ -79,9 +79,8 @@ class TestProcessConfiguredRequest:
         assert result["primary_file"] == "/mock/path/file.dat"
 
     @patch("api.services.proxy_configured_service.storage_adapter.read_text")
-    @patch("api.services.proxy_configured_service.StepExecutor.execute_step")
     def test_process_configured_request_with_edges(
-        self, mock_execute_step, mock_read_text
+        self, mock_read_text
     ):
         """エッジありの DAG で最終ノードの結果を返す"""
         mock_read_text.return_value = _make_pipeline_json(
@@ -90,19 +89,27 @@ class TestProcessConfiguredRequest:
                 {"id": "node2", "plugin": "plugin2", "params": {}},
             ],
             edges=[
-                {"source_node_id": "node1", "target_node_id": "node2", "target_input_name": "input1"}
+                # target_input_name を削除（PipelineEdge から廃止済み）
+                {"source_node_id": "node1", "target_node_id": "node2"}
             ],
         )
         container_node1 = _make_ok_container(metadata={"node": "1"}, primary_file="/mock/node1.dat")
         container_node2 = _make_ok_container(metadata={"node": "2"}, primary_file="/mock/node2.dat")
-        mock_execute_step.side_effect = [container_node1, container_node2]
 
-        result = process_configured_request(**COMMON_ARGS)
+        # StepExecutor のインスタンスレベルでモックする
+        # クラスレベルのパッチでは proxy_configured_service 内の
+        # step_executor インスタンスに効かない場合があるため
+        with patch("api.services.proxy_configured_service.StepExecutor") as mock_executor_class:
+            mock_instance = MagicMock()
+            mock_instance.execute_step.side_effect = [container_node1, container_node2]
+            mock_executor_class.return_value = mock_instance
 
-        assert mock_execute_step.call_count == 2
-        assert result["status"] == "ok"
-        assert result["final_metadata"] == {"node": "2"}
-        assert result["primary_file"] == container_node2.get_primary_file_path()
+            result = process_configured_request(**COMMON_ARGS)
+
+            assert mock_instance.execute_step.call_count == 2
+            assert result["status"] == "ok"
+            assert result["final_metadata"] == {"node": "2"}
+            assert result["primary_file"] == container_node2.get_primary_file_path()
 
     # ------------------------------------------------------------------
     # nodes が空のとき ValueError (早期バリデーション)

@@ -33,13 +33,7 @@ def execute_step_batch_task(
     step_executor = StepExecutor()
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
     logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
-
-    result_container = step_executor.execute_step(step_config, inputs)
-    print(result_container)
-    if (DataContainerStatus.ERROR == result_container.get_status()):
-        raise Exception(f"'{step_name}' failed, stopping pipeline execution.")
-
-    return result_container
+    return step_executor.execute_step(step_config, inputs)
 
 
 def _submit_node_task_batch(
@@ -52,11 +46,10 @@ def _submit_node_task_batch(
     for edge in edges:
         if edge.target_node_id == node_id:
             source_result = _submit_node_task_batch(edge.source_node_id, nodes_map, edges, project_root_dir)
-            upstream_inputs[edge.target_input_name] = source_result
+            upstream_inputs["input_data"] = source_result
     params = node_def.params.copy()
     for key, value in params.items():
         if isinstance(value, str) and ("path" in key or "_file" in key):
-            # ✅ storage_path_utils の normalize_path を使用
             params[key] = normalize_path(value, project_root_dir)
     result = execute_step_batch_task(
         step_name=node_def.id, plugin_name=node_def.plugin,
@@ -85,11 +78,14 @@ def run_pipeline_from_file(config_file_path: str, fail_stop: bool=True):
     _node_results_cache.clear()
     nodes_map = {node.id: node for node in pipeline_def.nodes}
 
+    target_node_ids = {edge.target_node_id for edge in pipeline_def.edges}
+    sink_node_ids = [nid for nid in nodes_map if nid not in target_node_ids]
+
     try:
-        for node_id in nodes_map:
+        for node_id in sink_node_ids:
             ret = _submit_node_task_batch(node_id, nodes_map, pipeline_def.edges, project_root)
-            if fail_stop :
-                if ret.status in [DataContainerStatus.ERROR,DataContainerStatus.SKIPPED,DataContainerStatus.VALIDATION_FAILED,]:
+            if fail_stop:
+                if ret.status in [DataContainerStatus.ERROR, DataContainerStatus.SKIPPED, DataContainerStatus.VALIDATION_FAILED]:
                     raise RuntimeError(f"Node '{node_id}' execution failed.")
     except Exception as e:
         logger.error(f"Failed to load pipeline definition file: {e}", exc_info=True)

@@ -36,7 +36,7 @@ class TestSubmitNodeTask:
 
         node1 = PipelineNode(id="node1", plugin="plugin1", params={})
         node2 = PipelineNode(id="node2", plugin="plugin2", params={})
-        edge = PipelineEdge(source_node_id="node1", target_node_id="node2", target_input_name="input1")
+        edge = PipelineEdge(source_node_id="node1", target_node_id="node2")
 
         nodes_map = {"node1": node1, "node2": node2}
         edges = [edge]
@@ -49,7 +49,7 @@ class TestSubmitNodeTask:
             step_name="node2",
             plugin_name="plugin2",
             params={},
-            inputs={"input1": mock_future}  # フューチャーをそのまま渡す（.result()廃止）
+            inputs={"input_data": mock_future}  # target_input_name廃止により固定キー
         )
         assert future == mock_future
 

@@ -152,13 +152,11 @@ class TestPipelineEdge:
         edge = PipelineEdge(
             source_node_id="node-1",
             target_node_id="node-2",
-            target_input_name="input_data"
         )
 
         # Assert
         assert edge.source_node_id == "node-1"
         assert edge.target_node_id == "node-2"
-        assert edge.target_input_name == "input_data"
 
     def test_pipeline_edge_missing_source_node_id(self):
         """Test validation error when source_node_id is missing"""
@@ -166,7 +164,6 @@ class TestPipelineEdge:
         with pytest.raises(ValidationError) as exc_info:
             PipelineEdge(
                 target_node_id="node-2",
-                target_input_name="input_data"
             )
         
         assert "source_node_id" in str(exc_info.value)
@@ -177,21 +174,9 @@ class TestPipelineEdge:
         with pytest.raises(ValidationError) as exc_info:
             PipelineEdge(
                 source_node_id="node-1",
-                target_input_name="input_data"
             )
         
         assert "target_node_id" in str(exc_info.value)
-
-    def test_pipeline_edge_missing_target_input_name(self):
-        """Test validation error when target_input_name is missing"""
-        # Arrange & Act & Assert
-        with pytest.raises(ValidationError) as exc_info:
-            PipelineEdge(
-                source_node_id="node-1",
-                target_node_id="node-2"
-            )
-        
-        assert "target_input_name" in str(exc_info.value)
 
     def test_pipeline_edge_with_complex_node_ids(self):
         """Test that a PipelineEdge can be created with complex node IDs"""
@@ -199,7 +184,6 @@ class TestPipelineEdge:
         edge = PipelineEdge(
             source_node_id="node-extractor-csv-1",
             target_node_id="node-validator-quality-1",
-            target_input_name="input_data"
         )
 
         # Assert
@@ -212,7 +196,6 @@ class TestPipelineEdge:
         edge = PipelineEdge(
             source_node_id="node-1",
             target_node_id="node-2",
-            target_input_name="input_data"
         )
 
         # Act
@@ -221,7 +204,6 @@ class TestPipelineEdge:
         # Assert
         assert "node-1" in json_str
         assert "node-2" in json_str
-        assert "input_data" in json_str
 
     def test_pipeline_edge_dict_conversion(self):
         """Test that a PipelineEdge can be converted to a dictionary"""
@@ -229,7 +211,6 @@ class TestPipelineEdge:
         edge = PipelineEdge(
             source_node_id="node-1",
             target_node_id="node-2",
-            target_input_name="input_data"
         )
 
         # Act
@@ -238,7 +219,7 @@ class TestPipelineEdge:
         # Assert
         assert edge_dict["source_node_id"] == "node-1"
         assert edge_dict["target_node_id"] == "node-2"
-        assert edge_dict["target_input_name"] == "input_data"
+        assert "target_input_name" not in edge_dict
 
 
 class TestPipelineDefinition:
@@ -296,7 +277,6 @@ class TestPipelineDefinition:
                 PipelineEdge(
                     source_node_id="node-1",
                     target_node_id="node-2",
-                    target_input_name="input_data"
                 )
             ]
         )
@@ -389,7 +369,6 @@ class TestPipelineDefinition:
                 PipelineEdge(
                     source_node_id="node-1",
                     target_node_id="node-2",
-                    target_input_name="input_data"
                 )
             ]
         )
@@ -401,7 +380,7 @@ class TestPipelineDefinition:
         assert "Test Pipeline" in json_str
         assert "node-1" in json_str
         assert "plugin1" in json_str
-        assert "input_data" in json_str
+        assert "target_input_name" not in json_str
 
     def test_pipeline_definition_dict_conversion(self):
         """Test that a PipelineDefinition can be converted to a dictionary"""
@@ -434,28 +413,15 @@ class TestPipelineDefinition:
                 PipelineNode(id="node-4", plugin="loader", params={})
             ],
             edges=[
-                PipelineEdge(
-                    source_node_id="node-1",
-                    target_node_id="node-2",
-                    target_input_name="input_data"
-                ),
-                PipelineEdge(
-                    source_node_id="node-2",
-                    target_node_id="node-3",
-                    target_input_name="input_data"
-                ),
-                PipelineEdge(
-                    source_node_id="node-3",
-                    target_node_id="node-4",
-                    target_input_name="input_data"
-                )
+                PipelineEdge(source_node_id="node-1", target_node_id="node-2"),
+                PipelineEdge(source_node_id="node-2", target_node_id="node-3"),
+                PipelineEdge(source_node_id="node-3", target_node_id="node-4"),
             ]
         )
 
         # Assert
         assert len(pipeline.nodes) == 4
         assert len(pipeline.edges) == 3
-        # Verify path exists from first node to last node
         assert pipeline.edges[0].source_node_id == "node-1"
         assert pipeline.edges[-1].target_node_id == "node-4"
 
