@@ -13,6 +13,7 @@ A003,22.8,"35.6897,139.6925","2025-09-19T19:10:00"
 script_dir = os.path.dirname(os.path.abspath(__file__))
 working_dir = os.path.abspath(os.path.join(script_dir, "..", "test", "data"))
 
+receivehttp_output_file = os.path.join(working_dir, "Step1", "body.csv")
 duckdb_output_file = os.path.join(working_dir, "Step3", "run_pipeline_directly.parquet")
 jinja2_output_file = os.path.join(working_dir, "Step5", "run_pipeline_directly.json")
 sql_file = os.path.join(working_dir, "Step2", "step2_with_duckdb.sql")
@@ -20,8 +21,15 @@ j2_template_file = os.path.join(working_dir, "Step4", "step4.j2")
 
 steps = [
     {
+      "plugin": "receive_http",
+      "params": {
+        "output_path": receivehttp_output_file
+      }
+    },
+    {
         "plugin": "with_duckdb",
         "params": {
+            "input_path": receivehttp_output_file,
             "query_file": sql_file,
             "output_path": duckdb_output_file,
             "table_name": "source_data"

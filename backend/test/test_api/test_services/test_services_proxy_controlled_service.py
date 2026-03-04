@@ -3,7 +3,7 @@ import tempfile
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from api.services.proxy_controlled_service import process_controlled_request, get_suffix_from_headers
 
 
@@ -14,6 +14,7 @@ from api.services.proxy_controlled_service import process_controlled_request, ge
 def _make_ok_container(metadata=None, file_path="/mock/path/file.csv"):
     """正常終了の DataContainer モックを返すヘルパー"""
     c = MagicMock(spec=DataContainer)
+    c.status = DataContainerStatus.SUCCESS  # status を明示的に設定
     c.metadata = metadata or {}
     c.file_paths = [file_path]
     c.get_primary_file_path.return_value = file_path
@@ -66,8 +67,9 @@ class TestProcessControlledRequest:
         assert called_step["plugin"] == "csv_plugin"
         assert called_step["name"].startswith("controlled_step_0_csv_plugin")
 
+        # input_path の強制注入は廃止済み。params は空のまま渡される。
         step_params = called_step["params"]
-        assert step_params["input_path"].endswith(".csv")
+        assert "input_path" not in step_params
 
         assert result["status"] == "ok"
         assert result["final_metadata"] == {"step": "1"}
@@ -107,28 +109,50 @@ class TestProcessControlledRequest:
             )
 
     # ------------------------------------------------------------------
-    # (+) result.file_paths が空のとき RuntimeError
+    # result.status == ERROR のとき RuntimeError
     # ------------------------------------------------------------------
     @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
-    def test_step_returns_no_file_paths_raises_runtime_error(self, mock_execute_step):
-        """execute_step が file_paths 空のコンテナを返したとき RuntimeError"""
-        empty_container = MagicMock(spec=DataContainer)
-        empty_container.file_paths = []  # 空
-        mock_execute_step.return_value = empty_container
+    def test_step_returns_error_status_raises_runtime_error(self, mock_execute_step):
+        """execute_step が ERROR ステータスを返したとき RuntimeError"""
+        error_container = MagicMock(spec=DataContainer)
+        error_container.status = DataContainerStatus.ERROR
+        error_container.errors = ["something went wrong"]
+        mock_execute_step.return_value = error_container
 
-        with pytest.raises(RuntimeError, match="failed or returned no file paths"):
+        with pytest.raises(RuntimeError, match="something went wrong"):
             process_controlled_request(
                 body_bytes=b"data",
                 payload=_make_payload(steps=[{"plugin": "plugin1", "params": {}}]),
                 headers={}
             )
 
+    # ------------------------------------------------------------------
+    # result.file_paths が空のとき RuntimeError
+    # ------------------------------------------------------------------
+    @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
+    def test_step_returns_no_file_paths_raises_runtime_error(self, mock_execute_step):
+        """execute_step が file_paths 空のコンテナを返したとき RuntimeError"""
+        empty_container = MagicMock(spec=DataContainer)
+        empty_container.status = DataContainerStatus.SUCCESS
+        empty_container.file_paths = []
+        mock_execute_step.return_value = empty_container
+
+        with pytest.raises(RuntimeError, match="returned no file paths"):
+            process_controlled_request(
+                body_bytes=b"data",
+                payload=_make_payload(steps=[{"plugin": "plugin1", "params": {}}]),
+                headers={}
+            )
+
+    # ------------------------------------------------------------------
+    # execute_step が None を返したとき RuntimeError
+    # ------------------------------------------------------------------
     @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
     def test_step_returns_none_raises_runtime_error(self, mock_execute_step):
         """execute_step が None を返したとき RuntimeError"""
         mock_execute_step.return_value = None
 
-        with pytest.raises(RuntimeError, match="failed or returned no file paths"):
+        with pytest.raises(RuntimeError, match="returned no result"):
             process_controlled_request(
                 body_bytes=b"data",
                 payload=_make_payload(steps=[{"plugin": "plugin1", "params": {}}]),

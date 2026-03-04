@@ -1,8 +1,9 @@
 import os
 import tempfile
+import copy
 from typing import Dict, Any, List
 
-from core.data_container.container import DataContainer
+from core.data_container.container import DataContainer, DataContainerStatus
 from core.pipeline.step_executor import StepExecutor
 
 # MIMEタイプ → 拡張子マッピング
@@ -39,11 +40,7 @@ def process_controlled_request(body_bytes: bytes, payload: Dict[str, Any], heade
         executor = StepExecutor()
         container_stack: List[DataContainer] = [initial_container]
 
-        import copy
         steps = copy.deepcopy(steps)
-
-        if "params" in steps[0]:
-            steps[0]["params"]["input_path"] = temp_path
 
         for idx, step in enumerate(steps):
             plugin_name = step.get("plugin")
@@ -57,8 +54,15 @@ def process_controlled_request(body_bytes: bytes, payload: Dict[str, Any], heade
             current_input = container_stack[-1]
             result = executor.execute_step(step_config, inputs={"input_data": current_input})
 
-            if result is None or not result.file_paths:
-                raise RuntimeError(f"Step '{plugin_name}' failed or returned no file paths.")
+            if result is None:
+                raise RuntimeError(f"Step '{plugin_name}' returned no result.")
+
+            if result.status == DataContainerStatus.ERROR:
+                errors = ", ".join(result.errors) if result.errors else "unknown error"
+                raise RuntimeError(f"Step '{plugin_name}' failed: {errors}")
+
+            if not result.file_paths:
+                raise RuntimeError(f"Step '{plugin_name}' returned no file paths.")
 
             container_stack.append(result)
 
