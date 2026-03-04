@@ -100,7 +100,6 @@ node -v
 > v20.x.x
 
 npm install
-npm install @rjsf/core @rjsf/validator-ajv8 @rjsf/mui @mui/material@^6.5.0 @mui/icons-material@^6.5.0 @emotion/react @emotion/styled electron electron-builder electron-is-dev concurrently
 ```
 
 ### 3.2.2. Run FrontEnd App
