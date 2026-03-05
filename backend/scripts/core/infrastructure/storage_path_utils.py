@@ -26,6 +26,10 @@ def is_local_path(path: str) -> bool:
     return scheme in {"", "file"}
 
 
+def is_memory_path(path: str) -> bool:
+    return get_scheme(path) == "memory"
+
+
 def _is_absolute_path(path: str) -> bool:
     if path.startswith("/"):
         return True
@@ -39,6 +43,10 @@ def _normalize_s3_path(path: str, project_root: str) -> str:
 
 
 def _normalize_http_path(path: str, project_root: str) -> str:
+    return path
+
+
+def _normalize_memory_path(path: str, project_root: str) -> str:
     return path
 
 
@@ -101,6 +109,7 @@ SCHEME_NORMALIZERS: Dict[str, NormalizeFunc] = {
     "http": _normalize_http_path,
     "https": _normalize_http_path,
     "file": _normalize_file_path,
+    "memory": _normalize_memory_path,
     "": _normalize_local_path,
 }
 

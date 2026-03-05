@@ -5,7 +5,7 @@ from .infrastructure.secret_resolver import secret_resolver, SecretResolverError
 from .infrastructure.secret import read_secret, write_secret, read_secret_in_dict
 from .infrastructure.spark_session_factory import SparkSessionFactory
 from .infrastructure.storage_adapter import storage_adapter
-from .infrastructure.storage_path_utils import get_scheme, is_remote_path, is_local_path, normalize_path
+from .infrastructure.storage_path_utils import get_scheme, is_remote_path, is_local_path, is_memory_path, normalize_path
 from .pipeline.step_executor import StepExecutor
 from .plugin_manager.base_plugin import BasePlugin
 from .plugin_manager.hooks import EtlHookSpecs
@@ -30,6 +30,7 @@ __all__ = [
     'get_scheme',
     'is_remote_path',
     'is_local_path',
+    'is_memory_path',
     'normalize_path',
     'StepExecutor',
     'BasePlugin',

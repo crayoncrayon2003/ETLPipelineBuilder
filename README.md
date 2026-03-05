@@ -41,22 +41,35 @@ Run Dummy Server
 (env) python test/Server/TestWebServer.py
 ```
 
-Run Pipeline
+Run Pipeline. Do not use authentication credentials. Store the data locally.
+
 ```
 (env) python run_pipeline_directly1.py
 (env) python run_pipeline_directly2.py
 ```
 
-### 2.2.1. Case2
+### 2.2.2. Case2
 Run Dummy Server
 ```
 (env) python test/Server/TestWebServerBasicAuth.py
 ```
 
-Run Pipeline
+Run Pipeline. Use authentication credentials. Store the data locally.
 ```
 (env) python run_pipeline_directly3.py
 (env) python run_pipeline_directly4.py
+```
+
+### 2.2.3. Case3
+Run Dummy Server
+```
+(env) python test/Server/TestWebServer.py
+```
+
+Run Pipeline. Do not use authentication credentials. Store the data in memory.
+
+```
+(env) python run_pipeline_directly5.py
 ```
 
 # 3. BuckEnd App with FrontEnd App

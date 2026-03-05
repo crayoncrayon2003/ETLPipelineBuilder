@@ -1,168 +1,199 @@
+import io
 import os
-import pandas as pd
 import shutil
-from typing import Dict, Any, Optional, Union
-from datetime import datetime, timezone
+import pandas as pd
+from typing import Any, Dict, List, Optional, Union
 
 from core.data_container.formats import SupportedFormats
-from .storage_path_utils import normalize_path, is_remote_path, is_local_path, parse_s3_path
+from .storage_path_utils import normalize_path, is_remote_path, is_local_path, is_memory_path
+from .storage_backends import LocalStorageBackend, S3StorageBackend, MemoryStorageBackend
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
 class StorageAdapter:
+    """
+    ストレージ操作の統一インターフェース。
+    パスのスキームに応じて適切なバックエンドに委譲する。
 
-    def _get_storage_options(self, path: str) -> Dict[str, Any]:
+    対応スキーム:
+        (スキームなし / file://)  → LocalStorageBackend
+        s3://                     → S3StorageBackend
+        memory://                 → MemoryStorageBackend
+    """
+
+    def __init__(self):
+        self._local   = LocalStorageBackend()
+        self._s3      = S3StorageBackend()
+        self._memory  = MemoryStorageBackend()
+
+    def _get_backend(self, path: str):
+        if is_memory_path(path):
+            return self._memory
         if is_remote_path(path):
-            return {}
-        return {}
+            return self._s3
+        return self._local
+
+    def _normalize(self, path: str) -> str:
+        """memory:// と s3:// はそのまま、ローカルパスのみ正規化する"""
+        if is_memory_path(path) or is_remote_path(path):
+            return path
+        return normalize_path(path, os.getcwd())
+
+    # ------------------------------------------------------------------
+    # DataFrame read/write
+    # ------------------------------------------------------------------
 
     def read_df(self, path: str, read_options: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         logger.info(f"Reading DataFrame from: {path}")
-        options = self._get_storage_options(path)
         read_opts = read_options.copy() if read_options else {}
         spark = read_opts.pop("spark", None)
-        normalized_path = normalize_path(path, os.getcwd())
-        file_format = SupportedFormats.from_path(normalized_path)
+        normalized = self._normalize(path)
+        file_format = SupportedFormats.from_path(normalized)
 
         try:
+            if is_memory_path(path):
+                data = self._memory.read_bytes(normalized)
+                return self._deserialize_df(data, file_format, read_opts)
+
             if spark is not None:
-                if file_format == SupportedFormats.CSV:
-                    return spark.read.options(**read_opts).csv(normalized_path)
-                elif file_format == SupportedFormats.PARQUET:
-                    return spark.read.options(**read_opts).parquet(normalized_path)
-                elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
-                    return spark.read.options(**read_opts).json(normalized_path)
-                else:
-                    raise ValueError(f"Spark read not supported for format '{file_format.value}'")
+                return self._spark_read_df(spark, normalized, file_format, read_opts)
+
+            options = {}
+            if file_format == SupportedFormats.CSV:
+                return pd.read_csv(normalized, storage_options=options, **read_opts)
+            elif file_format == SupportedFormats.PARQUET:
+                return pd.read_parquet(normalized, storage_options=options, **read_opts)
+            elif file_format == SupportedFormats.EXCEL:
+                return pd.read_excel(normalized, storage_options=options, **read_opts)
+            elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+                return pd.read_json(normalized, lines=True, storage_options=options, **read_opts)
             else:
-                if file_format == SupportedFormats.CSV:
-                    return pd.read_csv(normalized_path, storage_options=options, **read_opts)
-                elif file_format == SupportedFormats.PARQUET:
-                    return pd.read_parquet(normalized_path, storage_options=options, **read_opts)
-                elif file_format == SupportedFormats.EXCEL:
-                    return pd.read_excel(normalized_path, storage_options=options, **read_opts)
-                elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
-                    return pd.read_json(normalized_path, lines=True, storage_options=options, **read_opts)
-                else:
-                    raise ValueError(f"Reading DataFrame from format '{file_format.value}' is not supported.")
+                raise ValueError(f"Reading DataFrame from format '{file_format.value}' is not supported.")
         except Exception as e:
             logger.error(f"Failed to read file from '{path}': {e}")
             raise
 
     def write_df(self, df: pd.DataFrame, path: str, write_options: Optional[Dict[str, Any]] = None):
         logger.info(f"Writing {len(df)} rows to: {path}")
-        options = self._get_storage_options(path)
         write_opts = write_options.copy() if write_options else {}
         spark = write_opts.pop("spark", None)
-        normalized_path = normalize_path(path, os.getcwd())
-        file_format = SupportedFormats.from_path(normalized_path)
+        normalized = self._normalize(path)
+        file_format = SupportedFormats.from_path(normalized)
 
         try:
+            if is_memory_path(path):
+                data = self._serialize_df(df, file_format, write_opts)
+                self._memory.write_bytes(normalized, data)
+                return
+
             if spark is not None:
-                if file_format == SupportedFormats.CSV:
-                    df.write.options(**write_opts).mode("overwrite").csv(normalized_path)
-                elif file_format == SupportedFormats.PARQUET:
-                    df.write.options(**write_opts).mode("overwrite").parquet(normalized_path)
-                elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
-                    df.write.options(**write_opts).mode("overwrite").json(normalized_path)
-                else:
-                    raise ValueError(f"Spark write not supported for format '{file_format.value}'")
+                self._spark_write_df(spark, df, normalized, file_format, write_opts)
+                return
+
+            if not is_remote_path(path):
+                parent = os.path.dirname(normalized)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+
+            options = {}
+            if file_format == SupportedFormats.CSV:
+                df.to_csv(normalized, index=False, storage_options=options, **write_opts)
+            elif file_format == SupportedFormats.PARQUET:
+                df.to_parquet(normalized, index=False, storage_options=options, **write_opts)
+            elif file_format == SupportedFormats.EXCEL:
+                df.to_excel(normalized, index=False, storage_options=options, **write_opts)
+            elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+                df.to_json(normalized, orient='records', lines=True, storage_options=options, **write_opts)
             else:
-                if not is_remote_path(path):
-                    parent = os.path.dirname(normalized_path)
-                    if parent:
-                        os.makedirs(parent, exist_ok=True)
-                if file_format == SupportedFormats.CSV:
-                    df.to_csv(normalized_path, index=False, storage_options=options, **write_opts)
-                elif file_format == SupportedFormats.PARQUET:
-                    df.to_parquet(normalized_path, index=False, storage_options=options, **write_opts)
-                elif file_format == SupportedFormats.EXCEL:
-                    df.to_excel(normalized_path, index=False, storage_options=options, **write_opts)
-                elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
-                    df.to_json(normalized_path, orient='records', lines=True, storage_options=options, **write_opts)
-                else:
-                    raise ValueError(f"Writing DataFrame to format '{file_format.value}' is not supported.")
+                raise ValueError(f"Writing DataFrame to format '{file_format.value}' is not supported.")
         except Exception as e:
             logger.error(f"Failed to write file to '{path}': {e}")
             raise
 
+    def _deserialize_df(self, data: bytes, file_format: SupportedFormats, read_opts: dict) -> pd.DataFrame:
+        buf = io.BytesIO(data)
+        if file_format == SupportedFormats.CSV:
+            return pd.read_csv(buf, **read_opts)
+        elif file_format == SupportedFormats.PARQUET:
+            return pd.read_parquet(buf, **read_opts)
+        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            return pd.read_json(buf, lines=True, **read_opts)
+        else:
+            raise ValueError(f"Reading DataFrame from memory format '{file_format.value}' is not supported.")
+
+    def _serialize_df(self, df: pd.DataFrame, file_format: SupportedFormats, write_opts: dict) -> bytes:
+        buf = io.BytesIO()
+        if file_format == SupportedFormats.CSV:
+            df.to_csv(buf, index=False, **write_opts)
+        elif file_format == SupportedFormats.PARQUET:
+            df.to_parquet(buf, index=False, **write_opts)
+        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            df.to_json(buf, orient='records', lines=True, **write_opts)
+        else:
+            raise ValueError(f"Writing DataFrame to memory format '{file_format.value}' is not supported.")
+        return buf.getvalue()
+
+    def _spark_read_df(self, spark, path: str, file_format: SupportedFormats, read_opts: dict):
+        if file_format == SupportedFormats.CSV:
+            return spark.read.options(**read_opts).csv(path)
+        elif file_format == SupportedFormats.PARQUET:
+            return spark.read.options(**read_opts).parquet(path)
+        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            return spark.read.options(**read_opts).json(path)
+        else:
+            raise ValueError(f"Spark read not supported for format '{file_format.value}'")
+
+    def _spark_write_df(self, spark, df, path: str, file_format: SupportedFormats, write_opts: dict):
+        if file_format == SupportedFormats.CSV:
+            df.write.options(**write_opts).mode("overwrite").csv(path)
+        elif file_format == SupportedFormats.PARQUET:
+            df.write.options(**write_opts).mode("overwrite").parquet(path)
+        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            df.write.options(**write_opts).mode("overwrite").json(path)
+        else:
+            raise ValueError(f"Spark write not supported for format '{file_format.value}'")
+
+    # ------------------------------------------------------------------
+    # Text read/write
+    # ------------------------------------------------------------------
+
     def read_text(self, path: str, encoding: str = 'utf-8') -> str:
         logger.info(f"Reading text from: {path}")
         try:
-            normalized_path = normalize_path(path, os.getcwd())
-            if is_remote_path(path):
-                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
-                s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'r', encoding=encoding) as f:
-                    return f.read()
-            else:
-                if not os.path.isfile(normalized_path):
-                    raise FileNotFoundError(f"Local file not found: {normalized_path}")
-                with open(normalized_path, 'r', encoding=encoding) as f:
-                    return f.read()
-        except ImportError:
-            raise ImportError("s3fs is required for reading from S3.")
+            normalized = self._normalize(path)
+            return self._get_backend(path).read_text(normalized, encoding)
         except Exception as e:
             logger.error(f"Failed to read text from '{path}': {e}")
             raise
 
     def write_text(self, text_content: str, path: str, encoding: str = 'utf-8'):
         logger.info(f"Writing text content to: {path}")
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
-                s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'w', encoding=encoding) as f:
-                    f.write(text_content)
-            except ImportError:
-                raise ImportError("s3fs is required for writing text to S3.")
-        else:
-            parent = os.path.dirname(normalized_path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            with open(normalized_path, 'w', encoding=encoding) as f:
-                f.write(text_content)
+        normalized = self._normalize(path)
+        self._get_backend(path).write_text(normalized, text_content, encoding)
+
+    # ------------------------------------------------------------------
+    # Bytes read/write
+    # ------------------------------------------------------------------
 
     def read_bytes(self, path: str) -> bytes:
         logger.info(f"Reading bytes from: {path}")
         try:
-            normalized_path = normalize_path(path, os.getcwd())
-            if is_remote_path(path):
-                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
-                s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'rb') as f:
-                    return f.read()
-            else:
-                if not os.path.isfile(normalized_path):
-                    raise FileNotFoundError(f"Local file not found: {normalized_path}")
-                with open(normalized_path, 'rb') as f:
-                    return f.read()
-        except ImportError:
-            raise ImportError("s3fs is required for reading from S3.")
+            normalized = self._normalize(path)
+            return self._get_backend(path).read_bytes(normalized)
         except Exception as e:
             logger.error(f"Failed to read bytes from '{path}': {e}")
             raise
 
     def write_bytes(self, content: bytes, path: str):
         logger.info(f"Writing {len(content)} bytes to: {path}")
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import s3fs  # 遅延import: s3fs未インストール環境でのクラッシュを防ぐ
-                s3 = s3fs.S3FileSystem()
-                with s3.open(normalized_path, 'wb') as f:
-                    f.write(content)
-            except ImportError:
-                raise ImportError("s3fs is required for writing bytes to S3.")
-        else:
-            parent = os.path.dirname(normalized_path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            with open(normalized_path, 'wb') as f:
-                f.write(content)
+        normalized = self._normalize(path)
+        self._get_backend(path).write_bytes(normalized, content)
+
+    # ------------------------------------------------------------------
+    # File operations
+    # ------------------------------------------------------------------
 
     def download_remote_file(self, remote_path: str, local_path: Union[str, os.PathLike]):
         local_path = os.path.abspath(local_path)
@@ -170,24 +201,15 @@ class StorageAdapter:
         parent = os.path.dirname(local_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        normalized_remote_path = normalize_path(remote_path, os.getcwd())
 
         if is_remote_path(remote_path):
-            try:
-                import boto3
-                s3 = boto3.client('s3')
-                bucket, key = parse_s3_path(normalized_remote_path)
-                s3.download_file(bucket, key, local_path)
-                logger.info("Download from S3 complete.")
-            except ImportError:
-                raise ImportError("boto3 is required for S3 downloads. Please install it.")
-            except Exception as e:
-                logger.error(f"Failed to download from S3: {e}")
-                raise
+            normalized = self._normalize(remote_path)
+            self._s3.download_file(normalized, local_path)
         else:
-            if not os.path.isfile(normalized_remote_path):
-                raise FileNotFoundError(f"Remote file to download not found: {normalized_remote_path}")
-            shutil.copy(normalized_remote_path, local_path)
+            normalized = self._normalize(remote_path)
+            if not os.path.isfile(normalized):
+                raise FileNotFoundError(f"Remote file to download not found: {normalized}")
+            shutil.copy(normalized, local_path)
             logger.info("Copied from local path complete.")
 
     def upload_local_file(self, local_path: Union[str, os.PathLike], remote_path: str):
@@ -195,109 +217,35 @@ class StorageAdapter:
         logger.info(f"Uploading local file '{local_path}' to '{remote_path}'...")
         if not os.path.isfile(local_path):
             raise FileNotFoundError(f"Local file to upload not found: {local_path}")
-        normalized_remote_path = normalize_path(remote_path, os.getcwd())
 
         if is_remote_path(remote_path):
-            if normalized_remote_path.endswith("/"):
-                normalized_remote_path = normalized_remote_path + os.path.basename(local_path)
-            try:
-                import boto3
-                s3 = boto3.client('s3')
-                bucket, key = parse_s3_path(normalized_remote_path)
-                s3.upload_file(local_path, bucket, key)
-                logger.info("Upload to S3 complete.")
-            except ImportError:
-                raise ImportError("boto3 is required for S3 uploads. Please install it.")
-            except Exception as e:
-                logger.error(f"Failed to upload to S3: {e}")
-                raise
+            normalized = self._normalize(remote_path)
+            if normalized.endswith("/"):
+                normalized = normalized + os.path.basename(local_path)
+            self._s3.upload_file(local_path, normalized)
         else:
-            parent = os.path.dirname(normalized_remote_path)
+            normalized = self._normalize(remote_path)
+            parent = os.path.dirname(normalized)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            shutil.copy(local_path, normalized_remote_path)
+            shutil.copy(local_path, normalized)
             logger.info("Copied to local path complete.")
 
-    def list_files(self, path: str):
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import boto3
-                s3 = boto3.client("s3")
-                bucket, prefix = parse_s3_path(normalized_path)
-                result = []
-                paginator = s3.get_paginator("list_objects_v2")
-                for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                    for obj in page.get("Contents", []):
-                        key = obj['Key']
-                        if not key.endswith("/"):
-                            result.append(f"s3://{bucket}/{key}")
-                return result
-            except ImportError:
-                raise ImportError("boto3 is required for listing S3 files.")
-        else:
-            if os.path.isfile(normalized_path):
-                return [normalized_path]
-            elif os.path.isdir(normalized_path):
-                result = []
-                for root, _, files in os.walk(normalized_path):
-                    for f in files:
-                        result.append(os.path.join(root, f))
-                return result
-            else:
-                raise FileNotFoundError(f"Path not found: {normalized_path}")
+    def list_files(self, path: str) -> List[str]:
+        normalized = self._normalize(path)
+        return self._get_backend(path).list_files(normalized)
 
     def exists(self, path: str) -> bool:
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import boto3
-                import botocore.exceptions  # 遅延import: boto3とセットで読み込む
-                s3 = boto3.client("s3")
-                bucket, key = parse_s3_path(normalized_path)
-                try:
-                    s3.head_object(Bucket=bucket, Key=key)
-                    return True
-                except botocore.exceptions.ClientError:
-                    return False
-            except ImportError:
-                raise ImportError("boto3 is required for checking existence in S3.")
-        else:
-            return os.path.exists(normalized_path)
+        normalized = self._normalize(path)
+        return self._get_backend(path).exists(normalized)
 
     def delete(self, path: str):
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import boto3
-                s3 = boto3.client("s3")
-                bucket, key = parse_s3_path(normalized_path)
-                s3.delete_object(Bucket=bucket, Key=key)
-                logger.info(f"Deleted S3 object: {path}")
-            except ImportError:
-                raise ImportError("boto3 is required for deleting S3 files.")
-        else:
-            if os.path.isfile(normalized_path):
-                os.remove(normalized_path)
-                logger.info(f"Deleted local file: {normalized_path}")
-            else:
-                raise FileNotFoundError(f"Local file not found: {normalized_path}")
+        normalized = self._normalize(path)
+        self._get_backend(path).delete(normalized)
 
     def get_size(self, path: str) -> int:
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            try:
-                import boto3
-                s3 = boto3.client("s3")
-                bucket, key = parse_s3_path(normalized_path)
-                response = s3.head_object(Bucket=bucket, Key=key)
-                return response["ContentLength"]
-            except ImportError:
-                raise ImportError("boto3 is required for getting S3 object size.")
-        else:
-            if not os.path.isfile(normalized_path):
-                raise FileNotFoundError(f"Local file not found: {normalized_path}")
-            return os.path.getsize(normalized_path)
+        normalized = self._normalize(path)
+        return self._get_backend(path).get_size(normalized)
 
     def copy_file(self, source_path: str, dest_path: str):
         logger.info(f"Copying file from '{source_path}' to '{dest_path}'...")
@@ -317,100 +265,32 @@ class StorageAdapter:
         logger.info(f"Moved file from '{source}' to '{dest}'")
 
     def mkdir(self, path: str, exist_ok: bool = True):
-        """
-        Create a directory (local or S3 prefix).
-        For S3, we simulate by creating a dummy "folder" key ending with "/".
-        """
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            import boto3
-            s3 = boto3.client("s3")
-            bucket, key = parse_s3_path(normalized_path)
-            prefix = key.rstrip('/') + "/"
-            if not exist_ok:
-                response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-                if "Contents" in response:
-                    raise FileExistsError(f"S3 prefix already exists: {normalized_path}")
-            s3.put_object(Bucket=bucket, Key=prefix)
-            logger.info(f"Created S3 directory prefix: {normalized_path}")
-        else:
-            os.makedirs(normalized_path, exist_ok=exist_ok)
-            logger.info(f"Created local directory: {normalized_path}")
+        normalized = self._normalize(path)
+        self._get_backend(path).mkdir(normalized, exist_ok)
 
     def is_dir(self, path: str) -> bool:
-        """
-        Check if a path is a directory (local or S3 prefix).
-        """
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            import boto3
-            s3 = boto3.client("s3")
-            bucket, key = parse_s3_path(normalized_path)
-
-            if not key or key.endswith("/"):
-                return True
-
-            prefix = key.rstrip('/') + "/"
-            response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-            return "Contents" in response
-        else:
-            if os.path.isdir(normalized_path):
-                return True
-            _, ext = os.path.splitext(normalized_path)
-            return ext == ""
+        normalized = self._normalize(path)
+        return self._get_backend(path).is_dir(normalized)
 
     def rename(self, old_path: str, new_path: str):
-        """
-        Rename/move a file or directory.
-        On S3, performs copy + delete.
-        """
-        old_normalized = normalize_path(old_path, os.getcwd())
-        new_normalized = normalize_path(new_path, os.getcwd())
-        if is_remote_path(old_path):
-            import boto3
-            s3 = boto3.client("s3")
-            old_bucket, old_key = parse_s3_path(old_normalized)
-            new_bucket, new_key = parse_s3_path(new_normalized)
-            s3.copy_object(
-                Bucket=new_bucket,
-                CopySource={"Bucket": old_bucket, "Key": old_key},
-                Key=new_key,
-            )
-            s3.delete_object(Bucket=old_bucket, Key=old_key)
-            logger.info(f"Renamed S3 object: {old_normalized} -> {new_normalized}")
-        else:
-            os.rename(old_normalized, new_normalized)
-            logger.info(f"Renamed local file: {old_normalized} -> {new_normalized}")
+        old_normalized = self._normalize(old_path)
+        new_normalized = self._normalize(new_path)
+        self._get_backend(old_path).rename(old_normalized, new_normalized)
 
     def stat(self, path: str) -> Dict[str, Any]:
+        normalized = self._normalize(path)
+        return self._get_backend(path).stat(normalized)
+
+    # ------------------------------------------------------------------
+    # memory:// 専用操作
+    # ------------------------------------------------------------------
+
+    def clear_memory(self, prefix: str = None) -> None:
         """
-        Get file metadata (size, modified time, etc.).
-        Returns a dictionary with common fields.
-        last_modified は常に timezone-aware (UTC) な datetime で返す。
+        メモリストアをクリアする。
+        prefix を指定した場合はそのプレフィックスで始まるキーのみ削除する。
         """
-        normalized_path = normalize_path(path, os.getcwd())
-        if is_remote_path(path):
-            import boto3
-            s3 = boto3.client("s3")
-            bucket, key = parse_s3_path(normalized_path)
-            response = s3.head_object(Bucket=bucket, Key=key)
-            return {
-                "size": response["ContentLength"],
-                "last_modified": response["LastModified"],  # S3はUTC aware datetime
-                "content_type": response.get("ContentType"),
-                "etag": response.get("ETag"),
-                "storage_class": response.get("StorageClass", "STANDARD"),
-            }
-        else:
-            stat_result = os.stat(normalized_path)
-            return {
-                "size": stat_result.st_size,
-                # timezone.utc を明示してS3のlast_modifiedと型を統一する
-                "last_modified": datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc),
-                "mode": stat_result.st_mode,
-                "uid": stat_result.st_uid,
-                "gid": stat_result.st_gid,
-            }
+        self._memory.clear(prefix)
 
 
 # Singleton instance
