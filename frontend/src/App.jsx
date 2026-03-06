@@ -26,7 +26,6 @@ function App() {
       edges: activePipeline.edges.map(edge => ({
         source_node_id: edge.source,
         target_node_id: edge.target,
-        target_input_name: 'input_data',
       })),
     };
 
@@ -55,7 +54,6 @@ function App() {
       edges: activePipeline.edges.map(edge => ({
         source_node_id: edge.source,
         target_node_id: edge.target,
-        target_input_name: 'input_data',
       })),
     };
 

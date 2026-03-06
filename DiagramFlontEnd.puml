@@ -1,4 +1,4 @@
-@startuml ETL Framework Frontend - Final Conceptual Diagram (v2)
+@startuml ETL Framework Frontend
 
 !theme plain
 skinparam componentStyle uml2
@@ -32,54 +32,146 @@ actor User
 
 package "Backend" {
     interface "REST API\n(FastAPI)" as BackendApi
-    interface "Electron Main Process\n(main.cjs)" as ElectronMain
 }
 
+package "Electron Main Process\n(main.cjs)" as ElectronMain {
+    component "dialog:openFile" as IpcOpenFile
+    component "dialog:saveFile" as IpcSaveFile
+    component "dialog:openPipeline" as IpcOpenPipeline
+}
 
 ' #############################################
-' ###      FRONTEND APPLICATION (Renderer)    ###
+' ###      FRONTEND APPLICATION (Renderer)  ###
 ' #############################################
 package "Frontend Application (React)" {
 
+    component "main.jsx\n(Entry Point)" as MainJsx {
+        ' 起動時に初期化処理を実行:
+        ' 1. fetchAndSetMasterPlugins()
+        ' 2. addNewPipeline() (pipelines が空の場合)
+    }
+
     component "App.jsx" as App {
-        component "Header"
-        component "PipelineTabs"
+        ' ルートコンポーネント
+        ' Header (Load / Save / Run Test ボタン)
+        ' 全体レイアウトを定義
     }
 
     package "Main Components" {
-        component "PluginSidebar.jsx" as Sidebar
-        component "FlowCanvas.jsx" as Canvas
-        component "ParamsSidebar.jsx" as Params
+        component "PipelineTabs.jsx" as Tabs {
+            ' 複数パイプラインのタブ管理
+            ' addNewPipeline() でタブ追加
+        }
+        component "PluginSidebar.jsx" as Sidebar {
+            ' プラグイン一覧をカテゴリ別に表示
+            ' ドラッグでキャンバスにノードを追加
+            ' 起動時に apiClient.get(/plugins/) を呼ぶ
+        }
+        component "FlowCanvas.jsx" as Canvas {
+            ' React Flow でDAGをビジュアル編集
+            ' ドロップでノード追加
+            ' connectionRules で接続方向を制約:
+            ' extractor→cleanser→transformer
+            '   →validator→loader
+        }
+        component "ParamsSidebar.jsx" as Params {
+            ' ノード選択時: params フォームを表示
+            '   JSONスキーマを元にフォームを動的生成
+            '   path系パラメータは FilePathWidget で
+            '   Browse ボタンからファイル選択
+            ' ノード非選択時: Pipeline名を編集
+        }
+        component "PluginNode.jsx" as PluginNode {
+            ' DAG上の各ノードのUI (memo でメモ化)
+            ' プラグインタイプに応じて
+            '   Handle (接続ポイント) を表示
+            ' × ボタンでノード削除
+        }
     }
 
-    component "useFlowStore.js\n(Zustand)" as FlowStore <<State>>
+    component "useFlowStore.js\n(Zustand)" as FlowStore <<State>> {
+        ' --- State ---
+        ' masterPlugins: プラグイン一覧キャッシュ
+        ' pipelines: 全パイプライン定義
+        ' activePipelineId: 選択中パイプライン
+        ' selectedNodeId: 選択中ノード
+        ' --- Actions ---
+        ' fetchAndSetMasterPlugins()
+        ' addNewPipeline() / loadPipeline()
+        ' onNodesChange() / onEdgesChange()
+        ' onConnect() / addNode()
+        ' updateNodeParams()
+        ' updateActivePipelineName()
+    }
 
-    component "apiClient.js\n(axios)" as ApiClient
+    component "apiClient.js\n(axios)" as ApiClient {
+        ' baseURL: VITE_API_BASE_URL (.env)
+        ' fetchPlugins()   GET  /plugins/
+        ' runPipeline()    POST /pipelines/run
+        ' fetchPipelineSchema() GET /schemas/pipeline-definition
+    }
 
-    interface "window.electronAPI" as PreloadApi
+    interface "window.electronAPI\n(preload.cjs)" as PreloadApi {
+        ' openFileDialog()  → dialog:openFile
+        ' savePipeline()    → dialog:saveFile
+        ' openPipeline()    → dialog:openPipeline
+    }
 }
-
 
 ' #############################################
 ' ###            RELATIONSHIPS              ###
 ' #############################################
 
+' Entry point
 User -- App : Interacts with UI
+MainJsx ..> App : renders
+MainJsx ..> FlowStore : fetchAndSetMasterPlugins()\naddNewPipeline()
 
-App --o "Main Components" : Contains and orchestrates
+' App layout
+App ..> Tabs : renders
+App ..> Sidebar : renders
+App ..> Canvas : renders
+App ..> Params : renders
 
+' Canvas renders PluginNode
+Canvas ..> PluginNode : renders each node
 
-"Main Components" ..> FlowStore
-App ..> FlowStore
+' State management
+App ..> FlowStore : pipelines / activePipelineId\nloadPipeline()
+Tabs ..> FlowStore : pipelines / activePipelineId\nsetActivePipelineId() / addNewPipeline()
+Canvas ..> FlowStore : nodes / edges\nonNodesChange() / onEdgesChange()\nonConnect() / addNode()
+Params ..> FlowStore : selectedNodeId / params\nupdateNodeParams()\nupdateActivePipelineName()
+PluginNode ..> FlowStore : reads node state
 
-Sidebar ..> ApiClient : GET /plugins
-App ..> ApiClient : POST /pipelines/run
+' API calls
+Sidebar ..> ApiClient : GET /plugins/
+App ..> ApiClient : POST /pipelines/run\n(handleRunTest)
+FlowStore ..> ApiClient : fetchPlugins()\n(fetchAndSetMasterPlugins)
 
-ApiClient ..> BackendApi
+' API → Backend
+ApiClient ..> BackendApi : HTTP (VITE_API_BASE_URL)
 
-App ..> PreloadApi : Load/Save Pipeline definitions
-Params ..> PreloadApi : Browse File for paths
+' Electron IPC (preload bridge)
+App ..> PreloadApi : savePipeline()\nopenPipeline()
+Params ..> PreloadApi : openFileDialog()\n(Browse ボタン)
 
-PreloadApi ..> ElectronMain : IPC messages
+PreloadApi ..> IpcOpenFile : invoke
+PreloadApi ..> IpcSaveFile : invoke
+PreloadApi ..> IpcOpenPipeline : invoke
+
+note bottom of FlowStore
+  masterPlugins はアプリ起動時に一度だけ取得し
+  グローバルキャッシュとして保持する。
+  loadPipeline() 時にプラグイン情報の復元に使う。
+end note
+
+note right of Canvas
+  connectionRules による接続方向制約:
+  extractor  → cleanser / transformer / validator / loader
+  cleanser   → cleanser / transformer / validator / loader
+  transformer→ transformer / validator / loader
+  validator  → validator / loader
+  loader     → (接続不可)
+end note
 
 @enduml

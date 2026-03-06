@@ -25,7 +25,6 @@ export const useFlowStore = create((set, get) => ({
     try {
       const response = await fetchPlugins();
       set({ masterPlugins: response.data });
-      console.log("Master plugin list has been fetched and stored globally.");
     } catch (error) {
       console.error("Failed to fetch master plugin list:", error);
     }
@@ -56,10 +55,13 @@ export const useFlowStore = create((set, get) => ({
       });
     }
     if (pipelineDataFromFile.edges) {
-      pipelineDataFromFile.edges.forEach(edge => {
-        edge.source = edge.source_node_id;
-        edge.target = edge.target_node_id;
-      });
+      pipelineDataFromFile.edges = pipelineDataFromFile.edges.map(edge => ({
+        id: edge.id || `edge-${nanoid()}`,
+        source: edge.source_node_id,
+        target: edge.target_node_id,
+        type: 'smoothstep',
+        style: { strokeWidth: 2 },
+      }));
     }
     const newPipeline = { id: `pipeline-${nanoid()}`, ...pipelineDataFromFile };
     set((state) => ({
@@ -78,14 +80,6 @@ export const useFlowStore = create((set, get) => ({
     if (!activeId) return;
     set((state) => ({
       pipelines: { ...state.pipelines, [activeId]: { ...state.pipelines[activeId], name: newName } },
-    }));
-  },
-
-  updateActivePipelineSchedule: (newSchedule) => {
-    const activeId = get().activePipelineId;
-    if (!activeId) return;
-    set((state) => ({
-      pipelines: { ...state.pipelines, [activeId]: { ...state.pipelines[activeId], schedule: newSchedule } },
     }));
   },
 

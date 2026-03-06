@@ -30,21 +30,26 @@ skinparam note {
 ' #############################################
 
 package "Clients / Runners" {
-    class "Frontend GUI" as Frontend
-    package "Manual / Batch Execution" {
+    class "Frontend GUI\n(Electron + React)" as Frontend
+
+    package "Direct Execution" {
+        class "run_pipeline_directly.py" as DirectRunner {
+            + main()
+            -- memory:// パスで中間\nファイルをメモリ管理 --
+        }
         class "run_pipeline_with_parameter_file.py" as BatchRunner {
             + main(config_file)
         }
-        class "run_pipeline_directly.py" as DirectRunner {
-            + main()
-        }
     }
+
     package "API Clients" {
         class "call_controlled_service.py" as ControlledClient {
             + POST /proxy/controlled_service
+            -- steps[] をリクエストで指定 --
         }
         class "call_configured_service.py" as ConfiguredClient {
-            + POST /proxy/configured_service/{config_name}
+            + POST /proxy/configured_service
+            -- データのみ送信 --
         }
     }
 }
@@ -54,15 +59,68 @@ package "Clients / Runners" {
 ' #############################################
 
 package "backend.api" {
-    class "main.py" as FastApiApp
-    class "pipelines_router.py" as PipelinesRouter
-    class "pipeline_service.py" as PipelineService
-    class "configured_service_router.py" as ConfiguredRouter
-    class "proxy_configured_service.py" as ConfiguredService
-    class "proxy_controlled_service.py" as ControlledService
+    class "main.py\n(FastAPI + CORS)" as FastApiApp {
+        + GET  /
+        -- CORS: localhost:5173 のみ許可 --
+    }
+
+    package "routers" {
+        class "pipelines.py" as PipelinesRouter {
+            + POST /api/v1/pipelines/run
+        }
+        class "plugins.py" as PluginsRouter {
+            + GET /api/v1/plugins/
+        }
+        class "proxy_configured_service.py" as ConfiguredRouter {
+            + POST /api/v1/proxy/configured_service
+        }
+        class "proxy_controlled_service.py" as ControlledRouter {
+            + POST /api/v1/proxy/controlled_service
+        }
+    }
+
+    package "services" {
+        class "pipeline_service.py" as PipelineService {
+            + run_pipeline_from_definition()
+            + _normalize_path()
+            -- Prefect DAG を動的構築 --
+            -- project_root = backend/ --
+            -- シンクノード = source_node_ids\nに含まれないノード --
+        }
+        class "proxy_configured_service.py" as ConfiguredService {
+            + process_configured_request()
+            -- configured_pipeline.json を読み込み --
+            -- DAG を再帰的に実行 --
+            -- tempfile を finally で削除 --
+        }
+        class "proxy_controlled_service.py" as ControlledService {
+            + process_controlled_request()
+            -- steps[] をループ実行 --
+            -- tempfile を finally で削除 --
+        }
+    }
+
     package "schemas" {
-        class PipelineDefinition
-        class PluginInfo
+        class "PipelineDefinition" {
+            + name: str
+            + nodes: List[PipelineNode]
+            + edges: List[PipelineEdge]
+        }
+        class "PipelineNode" {
+            + id: str
+            + plugin: str
+            + params: Dict
+        }
+        class "PipelineEdge" {
+            + source_node_id: str
+            + target_node_id: str
+        }
+        class "PluginInfo" {
+            + name: str
+            + type: str
+            + description: str
+            + parameters_schema: Dict
+        }
     }
 }
 
@@ -71,95 +129,276 @@ package "backend.api" {
 ' #############################################
 
 package "backend.core" {
+
     package "pipeline" {
-        class StepExecutor
-        class DependencyResolver
+        class "StepExecutor" {
+            + execute_step(step_config, inputs)
+            -- params / inputs を deepcopy --
+            -- パス補完・変換は行わない --
+        }
     }
 
     package "plugin_manager" {
-        class FrameworkManager <<singleton>>
-        class EtlHookSpecs <<HookSpec>>
+        class "FrameworkManager" <<singleton>> {
+            - _plugin_class_cache: Dict[str, Type]
+            + call_plugin_execute()
+            -- 起動時にクラスをキャッシュ --
+            -- 実行時に毎回インスタンス生成 --
+            -- 重複名は warning で上書き --
+        }
+        class "EtlHookSpecs" <<HookSpec>> {
+            + get_plugin_name()
+            + get_parameters_schema()
+            -- firstresult=True --
+        }
     }
 
     package "data_container" {
-        class DataContainer
-        enum SupportedFormats
+        class "DataContainer" {
+            + file_paths: List[str]
+            + metadata: Dict
+            + errors: List[str]
+            + status: DataContainerStatus
+            + history: List[str]
+            + data: Optional[DataFrame]
+        }
+        enum "DataContainerStatus" {
+            PENDING
+            SUCCESS
+            ERROR
+            SKIPPED
+            VALIDATION_FAILED
+            TRANSFORMED
+            LOADED
+        }
+        class "SupportedFormats" <<Enum>> {
+            CSV / PARQUET / EXCEL
+            JSON / JSONL / XML
+            ZIP / TAR / BINARY
+            SHAPEFILE / GEOJSON
+            GTFS / GTFS_RT
+            + from_path()
+            + from_string()
+            -- フォーマット判定の唯一の真実の源 --
+        }
     }
 
-    package "config" {
-        class ConfigLoader
-        class ConfigValidator
+    package "infrastructure" {
+
+        class "StorageAdapter" <<singleton>> {
+            + read_df() / write_df()
+            + read_text() / write_text()
+            + read_bytes() / write_bytes()
+            + exists() / delete() / rename()
+            + list_files() / stat() / mkdir()
+            + copy_file() / move_file()
+            + clear_memory(prefix)
+            -- _get_backend(path) でルーティング --
+            -- _normalize(path) でパス正規化 --
+        }
+
+        package "storage_backends" {
+            abstract class "BaseStorageBackend" <<abstract>> {
+                + read_bytes() / write_bytes()
+                + read_text() / write_text()
+                + exists() / delete() / rename()
+                + list_files() / stat()
+                + mkdir() / is_dir()
+            }
+            class "LocalStorageBackend" {
+                -- スキーム: (なし) / file:// --
+            }
+            class "S3StorageBackend" {
+                -- スキーム: s3:// --
+                -- boto3 / s3fs を遅延 import --
+            }
+            class "MemoryStorageBackend" {
+                -- スキーム: memory:// --
+                - _store: Dict[str, bytes]
+                + clear(prefix)
+                -- プラグイン間の中間データ受け渡し --
+                -- クリアは実行制御層の責務 --
+            }
+        }
+
+        class "storage_path_utils" <<utility>> {
+            + normalize_path(path, project_root)
+            + is_remote_path()
+            + is_local_path()
+            + is_memory_path()
+            + get_scheme()
+            + parse_s3_path()
+        }
+
+        class "SecretResolver" <<singleton>> {
+            + read(secret_reference)
+            + write(secret_reference, value)
+            -- AWS環境: AWSSecretResolver --
+            -- ローカル: DotEnvSecretResolver --
+        }
+
+        class "EnvDetector" <<utility>> {
+            + is_running_on_aws()
+            -- @lru_cache(maxsize=1) --
+            -- 環境変数のみで判定 --
+            -- STSネットワーク呼び出しなし --
+        }
     }
 }
 
 ' #############################################
 ' ###              PLUGINS                  ###
 ' #############################################
+
 package "backend.plugins" {
-    class BasePlugin <<abstract>> {
-        +execute(input_data)
-        +prev_execute()
-        +run() <<abstract>>
-        +post_execute()
-        +get_plugin_name() <<abstract>>
-        +get_parameters_schema() <<abstract>>
-        +finalize_container()
+    abstract class "BasePlugin" <<abstract>> {
+        + execute(input_data)
+        + prev_execute()
+        + run() <<abstract>>
+        + post_execute()
+        + get_plugin_name() <<abstract>>
+        + get_parameters_schema() <<abstract>>
+        + finalize_container()
+        -- input_data は読み取り専用 --
+        -- 例外は execute() 内で捕捉し\nERROR DataContainer を返す --
     }
 
-    class "DuckDBTransformer"
-    class "HttpLoader"
-    class "Jinja2Transformer"
-    class "SparkTransformer"
-    class "FtpExtractor"
-    class "JsonSchemaValidator"
+    package "extractors" {
+        class "from_http"
+        class "from_http_with_basic_auth"
+        class "from_ftp"
+        class "from_scp"
+        class "receive_http" {
+            -- configured_service 専用 --
+            -- tempfile を永続パスにコピー --
+        }
+    }
+    package "transformers" {
+        class "with_duckdb"
+        class "with_jinja2"
+        class "with_spark"
+    }
+    package "validators" {
+        class "data_quality"
+        class "json_schema"
+        class "ngsi_validator"
+        class "business_rules"
+    }
+    package "loaders" {
+        class "to_http"
+        class "to_ftp"
+        class "to_scp"
+        class "s3_delete"
+    }
+    package "cleansing" {
+        class "duplicate_remover"
+        class "encoding_converter"
+        class "format_detector"
+        class "null_handler"
+        class "archive_extractor"
+    }
 
-    DuckDBTransformer --|> BasePlugin
-    HttpLoader --|> BasePlugin
-    Jinja2Transformer --|> BasePlugin
-    SparkTransformer --|> BasePlugin
-    FtpExtractor --|> BasePlugin
-    JsonSchemaValidator --|> BasePlugin
+    from_http --|> BasePlugin
+    from_http_with_basic_auth --|> BasePlugin
+    from_ftp --|> BasePlugin
+    from_scp --|> BasePlugin
+    receive_http --|> BasePlugin
+    with_duckdb --|> BasePlugin
+    with_jinja2 --|> BasePlugin
+    with_spark --|> BasePlugin
+    data_quality --|> BasePlugin
+    json_schema --|> BasePlugin
+    ngsi_validator --|> BasePlugin
+    business_rules --|> BasePlugin
+    to_http --|> BasePlugin
+    to_ftp --|> BasePlugin
+    to_scp --|> BasePlugin
+    s3_delete --|> BasePlugin
+    duplicate_remover --|> BasePlugin
+    encoding_converter --|> BasePlugin
+    format_detector --|> BasePlugin
+    null_handler --|> BasePlugin
+    archive_extractor --|> BasePlugin
 }
 
 ' #############################################
 ' ###             UTILITIES                 ###
 ' #############################################
+
 package "backend.utils" {
-    class "file_utils" as FileUtils <<utility>>
-    class "logger" as Logger <<utility>>
-    ' ... others
+    class "logger" <<utility>> {
+        + AppLogger
+        + setup_logger(__name__)
+        -- モジュールごとに呼び出す --
+        -- root logger に propagate --
+    }
 }
 
 ' #############################################
 ' ###            RELATIONSHIPS              ###
 ' #############################################
 
-' --- API Execution Flow ---
-Frontend ..> FastApiApp : HTTP Request
+' --- GUI → API ---
+Frontend ..> FastApiApp : HTTP Request\n(localhost:8000)
 FastApiApp ..> PipelinesRouter
+FastApiApp ..> PluginsRouter
 FastApiApp ..> ConfiguredRouter
-ConfiguredRouter ..> ConfiguredService
-ControlledClient ..> ControlledService : sends steps JSON
-ConfiguredClient ..> ConfiguredService : sends data only
+FastApiApp ..> ControlledRouter
 
-PipelinesRouter ..> PipelineService
-PipelinesRouter ..> backend.api.schemas.PipelineDefinition : uses for validation
-PipelineService ..> "Prefect Flow" : dynamically builds & runs
-"Prefect Flow" ..> StepExecutor : (via task)
+' --- Router → Service ---
+PipelinesRouter ..> PipelineService : delegates
+PipelinesRouter ..> PipelineDefinition : validates request body
+ConfiguredRouter ..> ConfiguredService : delegates
+ControlledRouter ..> ControlledService : delegates
 
-' --- Manual / Batch Execution Flow ---
-BatchRunner ..> "Prefect Flow" : triggers
-DirectRunner ..> FrameworkManager : uses directly
+' --- API Clients → Router ---
+ControlledClient ..> ControlledRouter : POST steps[]
+ConfiguredClient ..> ConfiguredRouter : POST data only
 
-' --- Core Engine Flow ---
+' --- Service → Execution ---
+PipelineService ..> StepExecutor : (via Prefect task)\n毎回インスタンス生成
+ConfiguredService ..> StepExecutor : ループ外で1回生成
+ControlledService ..> StepExecutor : ループ外で1回生成
+ConfiguredService ..> StorageAdapter : read configured_pipeline.json
+ConfiguredService ..> storage_path_utils : normalize_path()
+
+' --- Direct Execution ---
+DirectRunner ..> StepExecutor : 直接呼び出し
+BatchRunner ..> StepExecutor : 直接呼び出し
+
+' --- Core Engine ---
 StepExecutor ..> FrameworkManager : uses singleton
-FrameworkManager ..> backend.plugins : discovers plugins
-FrameworkManager ..> EtlHookSpecs : uses for spec
-StepExecutor ..> DataContainer : passes between steps
+FrameworkManager ..> EtlHookSpecs : registers hookspec
+FrameworkManager ..> BasePlugin : discovers & instantiates
+StepExecutor ..> DataContainer : deepcopy して渡す
 
-' --- Utility and Other Dependencies ---
-StepExecutor ..> FileUtils : uses
-backend.plugins ..> DataContainer
-backend.plugins ..> Logger
+' --- Plugin → Infrastructure ---
+BasePlugin ..> StorageAdapter : read/write
+BasePlugin ..> DataContainer : returns
+BasePlugin ..> SupportedFormats : from_path()
+BasePlugin ..> SecretResolver : read secrets
+
+' --- Storage ---
+StorageAdapter ..> LocalStorageBackend : local / file://
+StorageAdapter ..> S3StorageBackend : s3://
+StorageAdapter ..> MemoryStorageBackend : memory://
+StorageAdapter ..> storage_path_utils : normalize / scheme check
+LocalStorageBackend --|> BaseStorageBackend
+S3StorageBackend --|> BaseStorageBackend
+MemoryStorageBackend --|> BaseStorageBackend
+
+' --- Secret / Env ---
+SecretResolver ..> EnvDetector : is_running_on_aws()
+
+' --- Schema relations ---
+PipelineDefinition *-- PipelineNode
+PipelineDefinition *-- PipelineEdge
+
+' --- Logging ---
+FastApiApp ..> logger : setup_logger
+StepExecutor ..> logger : setup_logger
+FrameworkManager ..> logger : setup_logger
+BasePlugin ..> logger : setup_logger
+StorageAdapter ..> logger : setup_logger
 
 @enduml
