@@ -2,6 +2,7 @@ import os
 import re
 import json
 import base64
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
@@ -144,6 +145,13 @@ class DotEnvSecretResolver(BaseSecretResolver):
 # ==============================================================================
 class AWSSecretResolver(BaseSecretResolver):
 
+    # put_secret_value / create_secret 直後の GetSecretValue は、Secrets Manager が
+    # 複数ロケーションへレプリケートする都合上、ごく短時間だけ反映前の値を返すことがある。
+    # write() から戻った時点で後続の read() が確実に新しい値を読めるよう、
+    # 書き込み直後にこの回数・間隔で読み直して検証する。
+    _SECRET_VERIFY_MAX_ATTEMPTS = 10
+    _SECRET_VERIFY_DELAY_SECONDS = 0.2
+
     def __init__(self):
         super().__init__()
         try:
@@ -239,6 +247,7 @@ class AWSSecretResolver(BaseSecretResolver):
                 else:
                     payload = secret_value
                 self.secretsmanager_client.create_secret(Name=secret_name, SecretString=payload)
+                self._verify_secretsmanager_write(secret_name, payload)
                 logger.info(f"Secret '{secret_name}' created successfully.")
                 return
 
@@ -255,11 +264,47 @@ class AWSSecretResolver(BaseSecretResolver):
                 secret_value_to_put = secret_value
 
             self.secretsmanager_client.put_secret_value(SecretId=secret_name, SecretString=secret_value_to_put)
+            self._verify_secretsmanager_write(secret_name, secret_value_to_put)
             logger.info(f"Secret '{secret_name}' updated successfully.")
 
+        except SecretWriteError:
+            raise
         except Exception as e:
             logger.error(f"Failed to write secret '{secret_name}': {e}")
             raise SecretWriteError(f"Failed to write secret '{secret_name}': {e}")
+
+    def _verify_secretsmanager_write(self, secret_name: str, expected_value: str) -> None:
+        """
+        put_secret_value / create_secret 直後に読み直し、書き込んだ値が
+        実際に読める状態になるまで短時間リトライで確認する。
+
+        呼び出し元のプラグインが write() の完了をもって「後続ステップが
+        read() すれば必ず新しい値が読める」とみなせるようにするための保険。
+        """
+        last_seen = None
+        for attempt in range(1, self._SECRET_VERIFY_MAX_ATTEMPTS + 1):
+            try:
+                resp = self.secretsmanager_client.get_secret_value(SecretId=secret_name)
+                last_seen = resp.get("SecretString")
+            except ClientError as e:
+                last_seen = None
+                logger.debug(
+                    f"Verify read attempt {attempt}/{self._SECRET_VERIFY_MAX_ATTEMPTS} "
+                    f"for '{secret_name}' failed: {e}"
+                )
+
+            if last_seen == expected_value:
+                return
+
+            if attempt < self._SECRET_VERIFY_MAX_ATTEMPTS:
+                time.sleep(self._SECRET_VERIFY_DELAY_SECONDS)
+
+        raise SecretWriteError(
+            f"Secret '{secret_name}' was written but the new value could not be "
+            f"verified as readable after {self._SECRET_VERIFY_MAX_ATTEMPTS} attempts "
+            f"({self._SECRET_VERIFY_MAX_ATTEMPTS * self._SECRET_VERIFY_DELAY_SECONDS:.1f}s). "
+            f"This may indicate Secrets Manager replication lag."
+        )
 
     # ------------------------------------------------------------------
     # AWS Parameter Store
