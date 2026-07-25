@@ -1,3 +1,6 @@
+/.claude
+/.codex
+/**/__pycache__/
 /backend/build/
 /backend/data/
 /backend/dist/
@@ -11,3 +14,4 @@
 /backend/test/**/__pycache__/
 
 /frontend/node_modules/
+.coverage

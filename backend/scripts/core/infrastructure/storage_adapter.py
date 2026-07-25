@@ -41,6 +41,13 @@ class StorageAdapter:
             return path
         return normalize_path(path, os.getcwd())
 
+    def _get_storage_options(self, path: str) -> Dict[str, Any]:
+        """
+        pandas の read_csv/to_csv 等に渡す storage_options を解決する。
+        現時点ではローカル・S3ともに空dict（認証情報はboto3/s3fs側の既定の解決に委ねる）。
+        """
+        return {}
+
     # ------------------------------------------------------------------
     # DataFrame read/write
     # ------------------------------------------------------------------
@@ -60,7 +67,7 @@ class StorageAdapter:
             if spark is not None:
                 return self._spark_read_df(spark, normalized, file_format, read_opts)
 
-            options = {}
+            options = self._get_storage_options(path)
             if file_format == SupportedFormats.CSV:
                 return pd.read_csv(normalized, storage_options=options, **read_opts)
             elif file_format == SupportedFormats.PARQUET:
@@ -97,7 +104,7 @@ class StorageAdapter:
                 if parent:
                     os.makedirs(parent, exist_ok=True)
 
-            options = {}
+            options = self._get_storage_options(path)
             if file_format == SupportedFormats.CSV:
                 df.to_csv(normalized, index=False, storage_options=options, **write_opts)
             elif file_format == SupportedFormats.PARQUET:

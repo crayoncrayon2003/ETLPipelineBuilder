@@ -4,6 +4,10 @@ import pandas as pd
 from pathlib import Path
 from enum import Enum
 
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 
 class DataContainerStatus(Enum):
     PENDING = "pending"
@@ -22,7 +26,11 @@ class DataContainer:
         data: Optional[pd.DataFrame] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        self.data: Optional[pd.DataFrame] = data
+        # data は明示的に渡された場合のみ確定値として扱う。未指定(None)の場合は
+        # 「まだ読み込んでいない」状態にし、file_paths が後から埋まった時点で
+        # .data への初回アクセス時に遅延読み込みできるようにする。
+        self._data: Optional[pd.DataFrame] = data
+        self._data_loaded: bool = data is not None
         self.metadata: Dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.file_paths: List[str] = []
         self.errors: List[str] = []
@@ -30,8 +38,41 @@ class DataContainer:
         self.history: List[str] = []
         self.schema: Optional[Dict[str, Any]] = None
 
+    @property
+    def data(self) -> Optional[pd.DataFrame]:
+        """
+        プラグイン間でメモリ経由でデータを受け渡すための領域。
+
+        上流プラグインが明示的に `container.data = df` を設定していればそれを
+        そのまま返す(ファイルI/O無し)。設定されていない場合は、file_paths[0] から
+        `storage_adapter.read_df()` で1回だけ読み込んでキャッシュする
+        (ファイルパス経由の受け渡しと共存させるためのフォールバック)。
+        表形式以外のフォーマットや読み込み失敗時は None を返す。
+        """
+        if not self._data_loaded:
+            self._data = self._load_data_from_file_paths()
+            self._data_loaded = True
+        return self._data
+
+    @data.setter
+    def data(self, value: Optional[pd.DataFrame]) -> None:
+        self._data = value
+        self._data_loaded = True
+
+    def _load_data_from_file_paths(self) -> Optional[pd.DataFrame]:
+        if not self.file_paths:
+            return None
+        from core.infrastructure.storage_adapter import storage_adapter
+        try:
+            return storage_adapter.read_df(self.file_paths[0])
+        except Exception as e:
+            logger.debug(f"DataContainer: lazy load of '{self.file_paths[0]}' into .data failed: {e}")
+            return None
+
     def __repr__(self) -> str:
-        data_shape = self.data.shape if self.data is not None else "N/A (file-based)"
+        # .data のプロパティ経由アクセスは遅延読み込みを誘発するため、
+        # print()/ログ出力だけでファイルI/Oが走らないよう内部状態を直接見る。
+        data_shape = self._data.shape if self._data is not None else "N/A (file-based)"
         num_files = len(self.file_paths)
         return (
             f"<DataContainer | Data Shape: {data_shape} | "

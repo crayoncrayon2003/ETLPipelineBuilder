@@ -243,12 +243,25 @@ source_node_ids = {edge.source_node_id for edge in pipeline_def.edges}
 sink_node_ids = [nid for nid in nodes_map if nid not in source_node_ids]
 # ※ target_node_ids で判定するのは誤り
 
+# 循環のみで構成されたパイプライン（終着ノードなし）はここで検知して止める
+if not sink_node_ids:
+    raise ValueError("No sink node found. Pipeline may have a circular dependency.")
+
+# あるノードへの上流エッジは1本まで。2本以上は ValueError にする
+# （BasePlugin.run() が単一の input_data しか受け取れないため、
+#   黙って片方を上書きして消してしまうことを防ぐ）
+incoming_edges = [e for e in edges if e.target_node_id == node_id]
+if len(incoming_edges) > 1:
+    raise ValueError(f"Node '{node_id}' has {len(incoming_edges)} incoming edges ...")
+
 # パス正規化（../を正しく解決する）
 return os.path.normpath(os.path.join(project_root, normalized_str))
 
 # project_root = backend/ ディレクトリ
 # pipelines.py の __file__ から3階層上で計算
 ```
+
+上記3点（シンクノード判定・循環検知・上流エッジ1本まで）は `pipeline_service.py`・`proxy_configured_service.py`・`run_pipeline_with_parameter_file1.py`・`run_pipeline_with_parameter_file2.py` の4ファイルで同一のロジックとして実装されている（DAGをエッジで辿る処理がこの4ファイルに重複実装されているため、変更する際は4ファイル全てを揃える必要がある）。
 
 **proxy_controlled_service.py の設計:**
 - 各ステップの `params` は呼び出し側が全て明示する（自動注入なし）
@@ -265,13 +278,22 @@ class DataContainerStatus(Enum):
     SUCCESS, ERROR, SKIPPED, VALIDATION_FAILED
 
 class DataContainer:
+    data: Optional[pd.DataFrame] # メモリ経由のデータ受け渡し領域（遅延読み込みプロパティ）
     file_paths: List[str]        # 出力ファイルパス（複数可）
     metadata: Dict[str, Any]     # メタデータ
     errors: List[str]            # エラーメッセージ
     status: DataContainerStatus
 ```
 
-プラグイン間はファイルパスを介してデータを受け渡す。`memory://` を指定すればファイルシステムを使わずメモリ上でやり取りできる。
+プラグイン間はファイルパスを介してデータを受け渡すのが基本（`memory://` を指定すればファイルシステムを使わずメモリ上でやり取りできる）。これと並行して、`DataContainer.data` を使えばファイルI/Oを介さずメモリ上で直接データを受け渡すこともできる。両者はどちらか一方を選ぶものではなく、プラグインの実装次第で共存する。
+
+`data` は遅延読み込みプロパティになっている:
+- 上流プラグインが `container.data = df` と明示的に設定していれば、そのDataFrameがそのまま返る（ファイルI/O無し）。
+- 未設定の場合、`file_paths[0]` から `storage_adapter.read_df()` で1回だけ読み込みキャッシュする（ファイルパス経由の出力しかないプラグインの結果にも、下流プラグインが `.data` でアクセスできるようにするフォールバック）。
+- 読み込みに失敗した場合（非表形式フォーマット・ファイル削除済み等）は例外にせず `None` を返す。
+- `__repr__` は遅延読み込みを誘発しないよう内部状態を直接見る。`print(container)` や単純なログ出力だけでファイルI/Oが走ることはない。
+
+既存プラグイン（extractors/cleansing/transformers/validators/loaders 配下の全プラグイン）はいずれも `input_data`/`container.data` に一切触れておらず、`params` のパス文字列でファイル経由のやり取りを完結させている。そのため `.data` は完全にオプトインの仕組みであり、既存プラグインの挙動には影響しない。`.data` を使いたい場合のみ、プラグイン側で `input_data.data` を読む・`container.data = df` を設定する、という実装を選べる（`run(self, input_data, container)` のシグネチャ自体は変わらない）。
 
 #### StepExecutor（単一ステップの実行）
 
@@ -464,7 +486,9 @@ finally:
 
 7. **`input_data` は読み取り専用** — `BasePlugin.run()` の引数 `input_data` は変更禁止。変更が必要な場合は `copy.deepcopy(input_data)` してから使う。`finalize_container()` には必ず `container`（出力先）を渡し、`input_data` を渡してはならない。
 
-8. **`StepExecutor` は `params` と `inputs` を `deepcopy` してからプラグインに渡す** — プラグインが `params` や `DataContainer` を書き換えても、呼び出し元の状態に影響しない。`DataContainer.metadata` の更新は `copy.copy(metadata)` で浅いコピーを使う（メタデータはネストが浅いため）。
+8. **`StepExecutor` は `params` と `inputs` を `deepcopy` してからプラグインに渡す** — プラグインが `params` や `DataContainer` を書き換えても、呼び出し元の状態に影響しない。`DataContainer.metadata` の更新は `copy.copy(metadata)` で浅いコピーを使う（メタデータはネストが浅いため）。`DataContainer.data`（pandas DataFrame）が設定されている場合も同じ `deepcopy` の対象になり、ステップ間で独立した状態が保たれる。
+
+8a. **`DataContainer.data` はファイルパス経由と並行するメモリ経由の受け渡し手段（オプトイン）** — `data` は遅延読み込みプロパティ。上流プラグインが `container.data = df` を明示的に設定していればそのまま返し（ファイルI/O無し）、未設定なら `file_paths[0]` から `storage_adapter.read_df()` で1回だけ読み込んでキャッシュする。読み込み失敗時は例外にせず `None` を返す。既存プラグインは全て `.data` に触れず `params` のパス文字列で完結しているため挙動に影響はなく、`.data` を使うかどうかはプラグイン実装側の選択に委ねられる。`__repr__` は内部状態を直接見ることで、`print()`/ログ出力だけでは遅延読み込みを誘発しない。
 
 ### ストレージ拡張方針
 
@@ -483,7 +507,13 @@ finally:
 
 ### パイプライン実行
 
-13. **シンクノードの判定は `source_node_ids`** — `source_node_ids`（どのエッジの出発点にもなっていないノード）で末端ノードを判定する。`target_node_ids` では逆になるため使わない。
+13. **シンクノードの判定は `source_node_ids`** — `source_node_ids`（どのエッジの出発点にもなっていないノード）で末端ノードを判定する。`target_node_ids` では逆になるため使わない。`pipeline_service.py`・`proxy_configured_service.py`・`run_pipeline_with_parameter_file1/2.py` の4ファイルで同じロジックを使う。
+
+13a. **`sink_node_ids` が空ならエラーにする** — 循環のみで構成され終着ノードが存在しないパイプラインは、`ValueError("No sink node found. Pipeline may have a circular dependency.")` を送出する。4つの実行エンジン全てで同じ挙動。
+
+13b. **ノードへの上流エッジは1本まで** — `BasePlugin.run()` は単一の `input_data` しか受け取れない設計のため、あるノードに2本以上の上流エッジがあると、後から解決された方でもう一方が黙って上書きされて消える。これを防ぐため、2本以上の上流エッジを検出した時点で `ValueError` を送出する。複数の入力を1つのノードに合流させたい場合は、この設計自体（`BasePlugin`/`FrameworkManager` が単一入力しか扱えない点）を変更する必要があり、現状は未対応。
+
+13c. **エッジで繋がっていない独立ノードの実行順序は宣言順** — 明示的なエッジによる依存関係がないノード同士は、`pipeline_def.nodes`（JSON配列）の宣言順に実行される。これが唯一の順序保証であり、順序を制御したい場合はエッジで依存関係を明示するか、宣言順を意図通りに並べる。
 
 14. **`receive_http` プラグインは `configured_service` 専用** — `proxy_configured_service` の `initial_container`（リクエストボディの一時ファイル）を永続パスにコピーする役割を担う。`proxy_controlled_service` では使わない。
 
@@ -494,6 +524,8 @@ finally:
 ### シークレット管理
 
 17. **実行環境によってシークレットの取得先を自動切換え** — `secret_resolver` は起動時に `is_running_on_aws()` を確認し、AWS 環境なら `AWSSecretResolver`（AWS Secrets Manager）、ローカルなら `DotEnvSecretResolver`（`.env` ファイル）を使う。プラグインは `secret_resolver` を直接呼ぶだけで環境を意識しない。
+
+17a. **AWS Secrets Manager への書き込みは直後に読み直して検証する** — `AWSSecretResolver._write_to_secretsmanager()` は `put_secret_value`/`create_secret` の後、`_verify_secretsmanager_write()` が `get_secret_value` を最大10回・0.2秒間隔で読み直し、書き込んだ値が実際に読めるようになってから `write()` を完了させる。Secrets Manager は複数ロケーションへレプリケートする都合上、書き込み直後の読み込みがごく短時間だけ反映前の値を返すことがあるため。あるプラグインが書いたシークレットを、同一パイプライン内の後続プラグインが直後に読む、という利用パターンでの整合性を保証する（検証に失敗した場合は `SecretWriteError` を送出する）。
 
 ### ISO 25010の観点
 
@@ -535,5 +567,5 @@ npm start
 ```bash
 cd /home/user/HOME/sample/ETLPipelineBuilder/backend/test
 python run_all_tests.py
-# 767 passed（2026-03-05時点）
+# 768 passed（2026-07-25時点）
 ```

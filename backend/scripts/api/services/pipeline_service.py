@@ -66,13 +66,23 @@ def _submit_node_task(
 
     node_def = nodes_map[node_id]
 
+    # プラグインは単一の input_data しか受け取れないため、上流エッジは高々1本までしか
+    # 対応できない。2本以上あると片方が黙って上書きされて消えるため、ここで検知して止める。
+    incoming_edges = [e for e in edges if e.target_node_id == node_id]
+    if len(incoming_edges) > 1:
+        raise ValueError(
+            f"Node '{node_id}' has {len(incoming_edges)} incoming edges "
+            f"(from {[e.source_node_id for e in incoming_edges]}), but a node can only "
+            f"receive a single upstream input_data. Multiple incoming edges to one node "
+            f"are not supported."
+        )
+
     upstream_inputs: Dict[str, Any] = {}
-    for edge in edges:
-        if edge.target_node_id == node_id:
-            source_future = _submit_node_task(
-                edge.source_node_id, nodes_map, edges, project_root, node_results_cache
-            )
-            upstream_inputs["input_data"] = source_future
+    if incoming_edges:
+        source_future = _submit_node_task(
+            incoming_edges[0].source_node_id, nodes_map, edges, project_root, node_results_cache
+        )
+        upstream_inputs["input_data"] = source_future
 
     params = node_def.params.copy()
     for key, value in params.items():
@@ -100,8 +110,16 @@ def run_pipeline_from_definition(pipeline_def: PipelineDefinition, project_root:
         node_results_cache: Dict[str, Any] = {}
         nodes_map = {node.id: node for node in pipeline_def.nodes}
 
+        # source_node_ids に出てこないノード = どのエッジの出発点にもなっていない
+        # ノード = 終着(sink)ノード。エッジで繋がっていない独立ノードもここに含まれ、
+        # その実行順序は pipeline_def.nodes の宣言順（= このループの反復順）に従う。
         source_node_ids = {edge.source_node_id for edge in pipeline_def.edges}
         sink_node_ids = [nid for nid in nodes_map if nid not in source_node_ids]
+
+        if not sink_node_ids:
+            raise ValueError(
+                "No sink node found. Pipeline may have a circular dependency."
+            )
 
         for node_id in sink_node_ids:
             _submit_node_task(

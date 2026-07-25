@@ -50,17 +50,32 @@ def _lock_mock():
 
 
 def _resource_not_found(mock_sm):
-    """secretsmanager の ResourceNotFoundException を設定する"""
+    """secretsmanager の ResourceNotFoundException を設定する。
+    create_secret 呼び出し後は、そこで渡された値を get_secret_value が返すようにする。
+    write() が直後に読み直して検証するため、モックも書き込み後の状態を反映する必要がある。"""
     exc_cls = type(
         "ResourceNotFoundException",
         (ClientError,),
         {}
     )
     mock_sm.exceptions.ResourceNotFoundException = exc_cls
-    mock_sm.get_secret_value.side_effect = exc_cls(
+    not_found = exc_cls(
         {"Error": {"Code": "ResourceNotFoundException", "Message": ""}},
         "GetSecretValue",
     )
+    state = {"created": False, "value": None}
+
+    def _get_secret_value(**kwargs):
+        if not state["created"]:
+            raise not_found
+        return {"SecretString": state["value"]}
+
+    def _create_secret(**kwargs):
+        state["created"] = True
+        state["value"] = kwargs["SecretString"]
+
+    mock_sm.get_secret_value.side_effect = _get_secret_value
+    mock_sm.create_secret.side_effect = _create_secret
 
 
 # ======================================================================
@@ -548,7 +563,9 @@ class TestWriteToSecretsManager:
     def test_s_false_t_false_update_without_json_key(self, r):
         """R=True, S=False, T=False: 既存更新 (JSONキーなし) → 値をそのまま put"""
         r.secretsmanager_client = Mock()
-        r.secretsmanager_client.get_secret_value.return_value = {"SecretString": "old"}
+        state = {"value": "old"}
+        r.secretsmanager_client.get_secret_value.side_effect = lambda **kw: {"SecretString": state["value"]}
+        r.secretsmanager_client.put_secret_value.side_effect = lambda **kw: state.update(value=kw["SecretString"])
         r._write_to_secretsmanager("aws_secretsmanager://my-secret", "new_value")
         r.secretsmanager_client.put_secret_value.assert_called_once_with(
             SecretId="my-secret", SecretString="new_value"
@@ -558,8 +575,9 @@ class TestWriteToSecretsManager:
         """R=True, S=False, T=True: 既存JSON に json_key をネスト構造でマージ
         data['a']['b'] = 'val' というネスト構造で書き込まれる"""
         r.secretsmanager_client = Mock()
-        existing = json.dumps({"other": "keep"})
-        r.secretsmanager_client.get_secret_value.return_value = {"SecretString": existing}
+        state = {"value": json.dumps({"other": "keep"})}
+        r.secretsmanager_client.get_secret_value.side_effect = lambda **kw: {"SecretString": state["value"]}
+        r.secretsmanager_client.put_secret_value.side_effect = lambda **kw: state.update(value=kw["SecretString"])
         r._write_to_secretsmanager("aws_secretsmanager://my-secret@a.b", "new_val")
         call_args = r.secretsmanager_client.put_secret_value.call_args
         payload = json.loads(call_args.kwargs["SecretString"])
@@ -569,7 +587,9 @@ class TestWriteToSecretsManager:
     def test_u_false_invalid_existing_json_starts_fresh(self, r):
         """R=True, S=False, T=True, U=False: 既存が不正JSON → data={} から開始"""
         r.secretsmanager_client = Mock()
-        r.secretsmanager_client.get_secret_value.return_value = {"SecretString": "not_json"}
+        state = {"value": "not_json"}
+        r.secretsmanager_client.get_secret_value.side_effect = lambda **kw: {"SecretString": state["value"]}
+        r.secretsmanager_client.put_secret_value.side_effect = lambda **kw: state.update(value=kw["SecretString"])
         r._write_to_secretsmanager("aws_secretsmanager://my-secret@key", "val")
         call_args = r.secretsmanager_client.put_secret_value.call_args
         payload = json.loads(call_args.kwargs["SecretString"])
