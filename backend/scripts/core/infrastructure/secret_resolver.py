@@ -43,6 +43,22 @@ class BaseSecretResolver(ABC):
     def write(self, secret_reference: str, secret_value: str, **kwargs: Any) -> None:
         pass
 
+    def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
+        try:
+            data = json.loads(value)
+            for key in key_path.split("."):
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if not isinstance(data, dict):
+                    return None
+                data = data.get(key)
+                if data is None:
+                    return None
+            return str(data)
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(f"Failed to resolve nested key '{key_path}'")
+            return None
+
 
 # ==============================================================================
 # Resolving secrets via .env file
@@ -61,22 +77,6 @@ class DotEnvSecretResolver(BaseSecretResolver):
             logger.warning(".env file not found. Will rely on existing environment variables.")
             self.dotenv_path = os.path.join(os.getcwd(), '.env')
             logger.info(f"No existing .env file found. New '.env' file will be created at '{self.dotenv_path}' if writing is attempted.")
-
-    def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
-        try:
-            data = json.loads(value)
-            for key in key_path.split("."):
-                if isinstance(data, str):
-                    data = json.loads(data)
-                if not isinstance(data, dict):
-                    return None
-                data = data.get(key)
-                if data is None:
-                    return None
-            return str(data)
-        except (json.JSONDecodeError, AttributeError):
-            logger.warning(f"Failed to resolve nested key '{key_path}'")
-            return None
 
     def read(self, secret_reference: str) -> Optional[str]:
         env_match = re.match(r"^env://([^@]+)(?:@(.+))?$", secret_reference)
@@ -183,22 +183,6 @@ class AWSSecretResolver(BaseSecretResolver):
                 f"AWSSecretResolver received unsupported reference format "
                 f"for writing: '{secret_reference}'."
             )
-
-    def _resolve_nested_key(self, value: str, key_path: str) -> Optional[str]:
-        try:
-            data = json.loads(value)
-            for key in key_path.split("."):
-                if isinstance(data, str):
-                    data = json.loads(data)
-                if not isinstance(data, dict):
-                    return None
-                data = data.get(key)
-                if data is None:
-                    return None
-            return str(data)
-        except (json.JSONDecodeError, AttributeError):
-            logger.warning(f"Failed to resolve nested key '{key_path}'")
-            return None
 
     @staticmethod
     def _set_nested_key(data: dict, key_path: str, value: str) -> dict:

@@ -1,5 +1,16 @@
+import base64
+import urllib.parse
 from typing import Any, Dict, Optional, List, Tuple
 import re
+
+MODIFIERS = {
+    "base64":       lambda v: base64.b64encode(v.encode()).decode(),
+    "base64decode": lambda v: base64.b64decode(v).decode(),
+    "urlencode":    lambda v: urllib.parse.quote(v),
+    "strip":        lambda v: v.strip(),
+    "upper":        lambda v: v.upper(),
+    "lower":        lambda v: v.lower(),
+}
 
 
 def read_secret_in_dict(params: Dict[str, Any], resolver=None) -> Dict[str, Any]:
@@ -40,7 +51,7 @@ def extract_secret_references(text: str) -> List[Tuple[str, int, int]]:
             - Element 2: Start position
             - Element 3: End position
     """
-    pattern = re.compile(r"\$\{secrets\.([^}]+)\}")
+    pattern = re.compile(r"\$\{secrets\.([^|}]+)(?:\|([^}]+))?\}")
     matches = []
 
     for match in pattern.finditer(text):
@@ -99,7 +110,10 @@ def read_secret(param_value: Any, resolver=None, **kwargs: Any) -> Optional[Any]
     # 後ろから順に置換 (インデックスずれ防止)
     result = param_value
     for full_reference, start_pos, end_pos in reversed(secret_references):
-        secret_key = full_reference.replace("${secrets.", "").replace("}", "")
+        inner = full_reference[len("${secrets."):-1]
+        parts = inner.split("|")
+        secret_key = parts[0]
+        modifiers = parts[1:]
 
         try:
             resolved_value = resolver.read(secret_key, **kwargs)
@@ -107,8 +121,16 @@ def read_secret(param_value: Any, resolver=None, **kwargs: Any) -> Optional[Any]
             if resolved_value is None:
                 return None
 
+            for mod in modifiers:
+                fn = MODIFIERS.get(mod)
+                if fn is None:
+                    raise RuntimeError(f"Unknown modifier '{mod}' for secret '{secret_key}'")
+                resolved_value = fn(resolved_value)
+
             result = result[:start_pos] + str(resolved_value) + result[end_pos:]
 
+        except RuntimeError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Failed to read secret '{secret_key}': {e}") from e
 
