@@ -29,7 +29,7 @@ const FilePathWidget = (props) => {
         id={id}
         className="MuiInputBase-input MuiOutlinedInput-input"
         style={{ flexGrow: 1, padding: '8.5px 14px', border: '1px solid #ccc', borderRadius: '4px' }}
-        value={value || ''}
+        value={value ?? ''}
         onChange={(event) => onChange(event.target.value)}
         placeholder={schema.description || 'File path...'}
       />
@@ -84,7 +84,10 @@ const ParamsSidebar = () => {
   // --- RENDER LOGIC ---
   if (selectedNode) {
     // If a node IS selected, render the parameter form for that node
-    const schema = selectedNode.data.pluginInfo.parameters_schema;
+    const rawSchema = selectedNode.data.pluginInfo?.parameters_schema;
+    const schema = rawSchema && typeof rawSchema === 'object'
+      ? rawSchema
+      : { type: 'object', properties: {} };
     const formData = selectedNode.data.params || {};
     const widgets = { FilePathWidget: FilePathWidget };
     const uiSchema = {
@@ -98,7 +101,7 @@ const ParamsSidebar = () => {
         borderLeft: '1px solid #eee', padding: '15px', width: '350px',
         overflowY: 'auto', flexShrink: 0
       }}>
-        <h3 style={{ marginTop: 0 }}>Parameters for "{selectedNode.data.label}"</h3>
+        <h3 style={{ marginTop: 0 }}>Parameters for &quot;{selectedNode.data.label}&quot;</h3>
         <Form
           schema={schema}
           uiSchema={uiSchema}

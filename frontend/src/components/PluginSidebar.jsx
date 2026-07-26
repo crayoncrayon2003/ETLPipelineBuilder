@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import apiClient from '../api/apiClient';
+import { useFlowStore } from '../store/useFlowStore';
 
 const formatTypeName = (type) => {
   if (!type) return "Unknown";
@@ -7,14 +7,19 @@ const formatTypeName = (type) => {
 };
 
 const PluginSidebar = () => {
-  const [plugins, setPlugins] = useState([]);
+  const {
+    masterPlugins: plugins,
+    pluginsLoading,
+    pluginsError,
+    fetchAndSetMasterPlugins,
+  } = useFlowStore();
   const [openGroups, setOpenGroups] = useState({ extractor: true });
 
   useEffect(() => {
-    apiClient.get('/plugins/')
-      .then(response => setPlugins(response.data))
-      .catch(error => console.error('Failed to fetch plugins', error));
-  }, []);
+    if (plugins.length === 0) {
+      fetchAndSetMasterPlugins();
+    }
+  }, [fetchAndSetMasterPlugins, plugins.length]);
 
   const groupedPlugins = useMemo(() => {
     if (!plugins.length) return {};
@@ -28,7 +33,7 @@ const PluginSidebar = () => {
 
   const onDragStart = (event, plugin) => {
     event.dataTransfer.setData('application/reactflow', JSON.stringify(plugin));
-    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.effectAllowed = 'copy';
   };
 
   const toggleGroup = (groupKey) => {
@@ -47,6 +52,13 @@ const PluginSidebar = () => {
       flexShrink: 0
     }}>
       <h3 style={{ marginTop: 0 }}>Plugins</h3>
+      {pluginsLoading && <p role="status">Loading plugins…</p>}
+      {pluginsError && (
+        <div role="alert" style={{ color: '#b00020', fontSize: '13px' }}>
+          <p>Could not load plugins: {pluginsError}</p>
+          <button type="button" onClick={fetchAndSetMasterPlugins}>Retry</button>
+        </div>
+      )}
       {groupOrder.map(groupKey => (
         groupedPlugins[groupKey] && (
           <div key={groupKey} style={{ marginBottom: '10px' }}>
@@ -67,7 +79,7 @@ const PluginSidebar = () => {
                   }}>
                     <strong>{plugin.name}</strong>
                     <div style={{ fontSize: '12px', color: '#777', marginTop: '4px' }}>
-                      {plugin.description.split('.')[0]}
+                      {String(plugin.description || 'No description provided.').split('.')[0]}
                     </div>
                   </div>
                 ))}

@@ -1,12 +1,46 @@
-# React + Vite
+# ETL Pipeline Builder Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React/Vite と Electron で動作するパイプラインエディターです。
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Node.js 22.12以降
+- npm
+- `http://127.0.0.1:8000` で起動したETL Pipeline Builderバックエンド
 
-## Expanding the ESLint configuration
+Electronアプリはフロントエンドのみを梱包します。バックエンドはexeに同梱されないため、
+パイプラインの取得・実行には別途バックエンドを起動してください。
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Development
+
+```bash
+npm install
+npm start
+```
+
+ブラウザだけで確認する場合は `npm run dev` を使用します。
+
+## Windows installer
+
+Windows PowerShellで次を実行します。
+
+```powershell
+.\build-win-exe.ps1
+```
+
+NSISインストーラーは `dist_electron` に出力されます。Windows向けビルドはWindows上で
+実行することを推奨します。Linux/WSLからクロスビルドする場合はWineが必要です。
+
+パッケージ版のAPI通信はElectronメインプロセスを経由するため、`file://` のCORS制限を
+受けません。既定のAPI URLは `http://127.0.0.1:8000/api/v1` です。別のURLを使う場合は
+アプリ起動前に `ETL_API_BASE_URL` 環境変数を設定してください。
+
+コード署名証明書とアプリアイコンは現在設定されていません。そのため配布時にはWindows
+SmartScreenの警告とElectronの既定アイコンが表示されます。
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+```

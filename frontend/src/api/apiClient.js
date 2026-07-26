@@ -1,18 +1,36 @@
 import axios from 'axios';
 
 // Vite exposes environment variables starting with VITE_ on the `import.meta.env` object.
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-
-if (!apiBaseUrl) {
-  throw new Error("VITE_API_BASE_URL is not defined. Please check your .env.local file.");
-}
+const apiBaseUrl = (import.meta.env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1')
+  .replace(/\/+$/, '');
 
 const apiClient = axios.create({
   baseURL: apiBaseUrl,
+  timeout: 30_000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+const requestThroughElectron = async (method, path, body) => {
+  const result = await globalThis.window.electronAPI.apiRequest({ method, path, body });
+  if (!result?.ok) {
+    const error = new Error(result?.data?.detail || 'The backend request failed.');
+    error.response = {
+      status: result?.status || 0,
+      data: result?.data || { detail: error.message },
+    };
+    throw error;
+  }
+  return { data: result.data, status: result.status };
+};
+
+const request = (method, path, body) => {
+  if (globalThis.window?.electronAPI?.apiRequest) {
+    return requestThroughElectron(method, path, body);
+  }
+  return apiClient.request({ method, url: path, data: body });
+};
 
 
 /**
@@ -20,7 +38,7 @@ const apiClient = axios.create({
  * @returns {Promise<Array>} A promise that resolves to the list of plugins.
  */
 export const fetchPlugins = () => {
-  return apiClient.get('/plugins/');
+  return request('GET', '/plugins/');
 };
 
 /**
@@ -29,7 +47,7 @@ export const fetchPlugins = () => {
  * @returns {Promise<object>} A promise that resolves to the API response.
  */
 export const runPipeline = (pipelineDefinition) => {
-  return apiClient.post('/pipelines/run', pipelineDefinition);
+  return request('POST', '/pipelines/run', pipelineDefinition);
 };
 
 /**
@@ -37,7 +55,7 @@ export const runPipeline = (pipelineDefinition) => {
  * @returns {Promise<object>} A promise that resolves to the JSON Schema.
  */
 export const fetchPipelineSchema = () => {
-  return apiClient.get('/schemas/pipeline-definition');
+  return request('GET', '/schemas/pipeline-definition');
 };
 
 

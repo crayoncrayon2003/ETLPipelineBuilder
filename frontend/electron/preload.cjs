@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-console.log("--- Preload script (.cjs) is executing! ---");
-
 try {
   // Expose a controlled API to the renderer process (the React app)
   // under the `window.electronAPI` object.
@@ -17,10 +15,9 @@ try {
       openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
       savePipeline: (content, defaultName) => ipcRenderer.invoke('dialog:saveFile', content, defaultName),
       openPipeline: () => ipcRenderer.invoke('dialog:openPipeline'),
+      apiRequest: (request) => ipcRenderer.invoke('api:request', request),
     }
   );
-  console.log("--- contextBridge.exposeInMainWorld succeeded! ---");
 } catch (error) {
   console.error("--- Error in preload script (.cjs): ---", error);
 }
-

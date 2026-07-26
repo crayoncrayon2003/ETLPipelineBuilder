@@ -5,8 +5,6 @@ import './index.css'
 
 import { useFlowStore } from './store/useFlowStore.js';
 
-useFlowStore.getState().fetchAndSetMasterPlugins();
-
 if (Object.keys(useFlowStore.getState().pipelines).length === 0) {
   useFlowStore.getState().addNewPipeline();
 }

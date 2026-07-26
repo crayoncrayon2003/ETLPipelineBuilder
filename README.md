@@ -110,7 +110,7 @@ curl -X GET "http://127.0.0.1:8000/api/v1/plugins/"
 cd frontend
 nvm use
 node -v
-> v20.x.x
+> v22.12.x or later
 
 npm install
 ```
@@ -127,7 +127,7 @@ npm run dev
 ## 3.3. How to Use : Case1 Basic
 ### 3.3.1. Run Dummy Server
 ```
-pyton test/Server/TestWebServer.py
+python test/Server/TestWebServer.py
 ```
 
 ### 3.3.2. FrontEnd App

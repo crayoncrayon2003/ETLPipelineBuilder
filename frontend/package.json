@@ -2,20 +2,25 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
+  "description": "Desktop pipeline editor for ETL Pipeline Builder",
+  "author": "ETL Pipeline Builder contributors",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "...",
-    "preview": "...",
+    "lint": "eslint .",
+    "preview": "vite preview",
     "electron:start": "electron electron/main.cjs",
     "start": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron:start\"",
     "build-win-exe": "vite build && electron-builder --win",
     "build-linux-AppImage": "vite build && electron-builder --linux"
   },
   "build": {
-    "appId": "com.example.frontend",
+    "appId": "com.etlpipelinebuilder.desktop",
     "productName": "ETLPipelineBuilder",
     "win": {
       "target": "nsis"
@@ -31,34 +36,31 @@
       "output": "dist_electron"
     }
   },
-  "dependencies": {
+  "devDependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@eslint/js": "^9.32.0",
     "@mui/icons-material": "^6.5.0",
     "@mui/material": "^6.5.0",
     "@rjsf/core": "^5.24.13",
     "@rjsf/mui": "^5.24.13",
     "@rjsf/validator-ajv8": "^5.24.13",
-    "axios": "^1.11.0",
-    "concurrently": "^9.2.1",
-    "electron": "^37.5.0",
-    "electron-builder": "^26.0.12",
-    "electron-is-dev": "^3.0.1",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "reactflow": "^11.11.4",
-    "zustand": "^5.0.7"
-  },
-  "devDependencies": {
-    "@eslint/js": "^9.32.0",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^4.7.0",
+    "axios": "^1.11.0",
+    "concurrently": "^9.2.1",
+    "electron": "^41.7.1",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.3.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "reactflow": "^11.11.4",
     "vite": "^7.1.0",
-    "wait-on": "^8.0.4"
+    "wait-on": "^8.0.4",
+    "zustand": "^5.0.7"
   }
 }
