@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional
 from core.plugin_manager.manager import framework_manager
 from core.data_container.container import DataContainer
 
-from utils.logger import setup_logger
+from utils.logger import redact_sensitive_data, setup_logger
 
 logger = setup_logger(__name__)
 
@@ -43,7 +43,9 @@ class StepExecutor:
         Raises:
         - ValueError: If 'plugin' key is missing or empty in step_config
         """
-        logger.debug(f"[StepExecutor] step_config (raw): {step_config}")
+        logger.debug(
+            f"[StepExecutor] step_config: {redact_sensitive_data(step_config)}"
+        )
 
         plugin_name = step_config.get('plugin')
 
@@ -57,7 +59,7 @@ class StepExecutor:
 
         logger.info(
             f"  Executing step: '{step_name}' using plugin: '{plugin_name}' "
-            f"with params: {params}"
+            f"with params: {redact_sensitive_data(params)}"
         )
 
         try:

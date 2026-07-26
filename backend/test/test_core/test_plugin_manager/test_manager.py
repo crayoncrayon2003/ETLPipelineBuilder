@@ -152,6 +152,17 @@ class TestCallPluginExecute:
         )
         assert isinstance(result, DataContainer)
 
+    def test_multiple_inputs_are_rejected_by_single_input_contract(self, manager):
+        with pytest.raises(ValueError, match="only one upstream input_data"):
+            manager.call_plugin_execute(
+                "mock_plugin",
+                {},
+                inputs={
+                    "first": DataContainer(),
+                    "second": DataContainer(),
+                },
+            )
+
 
 # ======================================================================
 # _discover_plugins

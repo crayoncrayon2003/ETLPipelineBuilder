@@ -35,6 +35,16 @@ class TestStorageAdapter:
         df = sa.read_df(str(file_path))
         pd.testing.assert_frame_equal(df, sample_df)
 
+    def test_json_and_jsonl_use_distinct_wire_formats(self, sa, tmp_path, sample_df):
+        json_path = tmp_path / "test.json"
+        jsonl_path = tmp_path / "test.jsonl"
+
+        sa.write_df(sample_df, str(json_path))
+        sa.write_df(sample_df, str(jsonl_path))
+
+        assert json_path.read_text(encoding="utf-8").lstrip().startswith("[")
+        assert not jsonl_path.read_text(encoding="utf-8").lstrip().startswith("[")
+
     def test_read_df_excel(self, sa, tmp_path, sample_df):
         """A=False × B=EXCEL"""
         file_path = tmp_path / "test.xlsx"
@@ -60,6 +70,19 @@ class TestStorageAdapter:
         sa.write_df(sample_df, str(file_path))
         df = sa.read_df(str(file_path), read_options={"nrows": 1})
         assert len(df) == 1
+
+    @patch("requests.get")
+    def test_read_text_from_http_url(self, mock_get, sa):
+        response = MagicMock()
+        response.content = "remote config".encode("utf-8")
+        mock_get.return_value = response
+
+        assert sa.read_text("https://example.test/pipeline.json") == "remote config"
+        mock_get.assert_called_once_with(
+            "https://example.test/pipeline.json",
+            timeout=60,
+        )
+        response.raise_for_status.assert_called_once_with()
 
     def test_read_df_spark_csv(self, sa, tmp_path, sample_df):
         """A=True(spark) × B=CSV"""
@@ -424,6 +447,28 @@ class TestStorageAdapter:
         assert args[1] == "file.txt"
         assert args[2] == str(local_path)
 
+    @patch("requests.get")
+    def test_download_http_to_local(self, mock_get, sa, tmp_path):
+        """HTTPはS3へ誤ルーティングせず、レスポンス本文をローカルへ保存する"""
+        response = MagicMock()
+        response.content = b"downloaded over HTTP"
+        mock_get.return_value = response
+        local_path = tmp_path / "downloaded.txt"
+
+        with patch.object(sa._s3, "download_file") as mock_s3_download:
+            sa.download_remote_file(
+                "https://example.test/file.txt",
+                str(local_path),
+            )
+
+        assert local_path.read_bytes() == b"downloaded over HTTP"
+        mock_get.assert_called_once_with(
+            "https://example.test/file.txt",
+            timeout=60,
+        )
+        response.raise_for_status.assert_called_once_with()
+        mock_s3_download.assert_not_called()
+
     def test_download_parent_empty_skips_makedirs(self, sa, tmp_path):
         """C=False(parent空): makedirs がスキップされる
         MCDC: bool(parent)=False の独立した影響を確認
@@ -506,6 +551,20 @@ class TestStorageAdapter:
         assert args[1] == "bucket"
         assert args[2].endswith("myfile.txt")
         assert args[2] != "myfile.txt"  # prefixが付いている
+
+    def test_upload_to_http_is_rejected_as_read_only(self, sa, tmp_path):
+        """HTTPアップロードをS3へ誤ルーティングせず明示的に拒否する"""
+        src = tmp_path / "file.txt"
+        src.write_text("content")
+
+        with patch.object(sa._s3, "upload_file") as mock_s3_upload:
+            with pytest.raises(ValueError, match="read-only"):
+                sa.upload_local_file(
+                    str(src),
+                    "https://example.test/file.txt",
+                )
+
+        mock_s3_upload.assert_not_called()
 
     @patch("boto3.client")
     def test_upload_s3_exception_propagates(self, mock_boto3, sa, tmp_path):

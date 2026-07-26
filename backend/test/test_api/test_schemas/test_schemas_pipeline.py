@@ -321,18 +321,67 @@ class TestPipelineDefinition:
         assert "edges" in str(exc_info.value)
 
     def test_pipeline_definition_with_empty_nodes_and_edges(self):
-        """Test creating a PipelineDefinition with empty nodes and edges"""
-        # Arrange & Act
-        pipeline = PipelineDefinition(
-            name="Empty Pipeline",
-            nodes=[],
-            edges=[]
-        )
+        """An executable pipeline must contain at least one node."""
+        with pytest.raises(ValidationError, match="at least one node"):
+            PipelineDefinition(
+                name="Empty Pipeline",
+                nodes=[],
+                edges=[]
+            )
 
-        # Assert
-        assert pipeline.name == "Empty Pipeline"
-        assert len(pipeline.nodes) == 0
-        assert len(pipeline.edges) == 0
+    def test_pipeline_definition_rejects_duplicate_node_ids(self):
+        with pytest.raises(ValidationError, match="Duplicate node IDs"):
+            PipelineDefinition(
+                name="Duplicate IDs",
+                nodes=[
+                    PipelineNode(id="node-1", plugin="plugin1"),
+                    PipelineNode(id="node-1", plugin="plugin2"),
+                ],
+                edges=[],
+            )
+
+    def test_pipeline_definition_rejects_unknown_edge_endpoint(self):
+        with pytest.raises(ValidationError, match="unknown target node"):
+            PipelineDefinition(
+                name="Dangling edge",
+                nodes=[PipelineNode(id="node-1", plugin="plugin1")],
+                edges=[
+                    PipelineEdge(
+                        source_node_id="node-1",
+                        target_node_id="missing",
+                    )
+                ],
+            )
+
+    def test_pipeline_definition_rejects_cycle_with_other_valid_nodes(self):
+        with pytest.raises(ValidationError, match="circular dependency"):
+            PipelineDefinition(
+                name="Partial cycle",
+                nodes=[
+                    PipelineNode(id="node-1", plugin="plugin1"),
+                    PipelineNode(id="node-2", plugin="plugin2"),
+                    PipelineNode(id="node-3", plugin="plugin3"),
+                ],
+                edges=[
+                    PipelineEdge(source_node_id="node-1", target_node_id="node-2"),
+                    PipelineEdge(source_node_id="node-2", target_node_id="node-1"),
+                ],
+            )
+
+    def test_pipeline_definition_rejects_multiple_incoming_edges(self):
+        with pytest.raises(ValidationError, match="only one upstream input_data"):
+            PipelineDefinition(
+                name="Multiple inputs",
+                nodes=[
+                    PipelineNode(id="node-1", plugin="plugin1"),
+                    PipelineNode(id="node-2", plugin="plugin2"),
+                    PipelineNode(id="node-3", plugin="plugin3"),
+                ],
+                edges=[
+                    PipelineEdge(source_node_id="node-1", target_node_id="node-3"),
+                    PipelineEdge(source_node_id="node-2", target_node_id="node-3"),
+                ],
+            )
 
     def test_pipeline_definition_from_dict(self):
         """Test creating a PipelineDefinition from a dictionary"""
@@ -363,7 +412,8 @@ class TestPipelineDefinition:
         pipeline = PipelineDefinition(
             name="Test Pipeline",
             nodes=[
-                PipelineNode(id="node-1", plugin="plugin1", params={"key": "value"})
+                PipelineNode(id="node-1", plugin="plugin1", params={"key": "value"}),
+                PipelineNode(id="node-2", plugin="plugin2", params={}),
             ],
             edges=[
                 PipelineEdge(
@@ -453,7 +503,7 @@ class TestPipelineDefinition:
         # Act
         pipeline = PipelineDefinition(
             name=long_name,
-            nodes=[],
+            nodes=[PipelineNode(id="node-1", plugin="plugin1")],
             edges=[]
         )
 

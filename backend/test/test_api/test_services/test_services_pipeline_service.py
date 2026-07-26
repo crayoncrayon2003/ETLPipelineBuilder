@@ -4,8 +4,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import pytest
 from unittest.mock import patch, MagicMock, ANY, call
 
-from api.services.pipeline_service import _normalize_path, _submit_node_task, run_pipeline_from_definition
+from api.services.pipeline_service import (
+    _normalize_path,
+    _submit_node_task,
+    execute_step_api_task,
+    run_pipeline_from_definition,
+)
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
+from core.data_container.container import DataContainer, DataContainerStatus
 
 
 class TestNormalizePath:
@@ -18,6 +24,9 @@ class TestNormalizePath:
             ("//wsl$/Ubuntu/home/user/file.txt", "/home/user", "/home/user/file.txt"),
             ("relative/file.txt", "/home/project", "/home/project/relative/file.txt"),
             ("/absolute/path/file.txt", "/home/project", "/absolute/path/file.txt"),
+            ("s3://bucket/file.csv", "/home/project", "s3://bucket/file.csv"),
+            ("memory://run/file.csv", "/home/project", "memory://run/file.csv"),
+            ("https://example.test/file.csv", "/home/project", "https://example.test/file.csv"),
         ]
     )
     def test_normalize_path_various_formats(self, input_path, project_root, expected):
@@ -54,11 +63,31 @@ class TestSubmitNodeTask:
         assert future == mock_future
 
 
+class TestExecuteStepApiTask:
+
+    @patch("api.services.pipeline_service.StepExecutor.execute_step")
+    def test_error_container_is_raised_as_task_failure(self, mock_execute_step):
+        result = DataContainer(status=DataContainerStatus.ERROR)
+        result.add_error("plugin failed")
+        mock_execute_step.return_value = result
+
+        with pytest.raises(RuntimeError, match="plugin failed"):
+            execute_step_api_task.fn(
+                step_name="node1",
+                plugin_name="plugin1",
+                params={},
+                inputs={},
+            )
+
+
 class TestRunPipelineFromDefinition:
     """Test class for run_pipeline_from_definition function"""
 
     @patch("api.services.pipeline_service._submit_node_task")
-    def test_run_pipeline_from_definition_calls_submit(self, mock_submit):
+    @patch("api.services.pipeline_service.flow")
+    def test_run_pipeline_from_definition_calls_submit(self, mock_flow, mock_submit):
+        # Unit-test the graph construction without starting Prefect's runtime.
+        mock_flow.side_effect = lambda **kwargs: lambda func: func
         node1 = PipelineNode(id="n1", plugin="p1", params={})
         node2 = PipelineNode(id="n2", plugin="p2", params={})
         edges = []

@@ -2,6 +2,7 @@ import os
 import tempfile
 import json
 import pytest
+import pandas as pd
 from unittest.mock import patch, MagicMock
 from core.data_container.container import DataContainer, DataContainerStatus
 from api.services.proxy_controlled_service import process_controlled_request, get_suffix_from_headers
@@ -37,6 +38,8 @@ class TestGetSuffixFromHeaders:
             ("application/parquet",     ".parquet"),
             ("application/octet-stream", ".bin"),
             ("text/plain",              ".txt"),
+            ("text/csv; charset=utf-8", ".csv"),
+            (" Application/JSON ; Charset=UTF-8 ", ".json"),
             ("unknown/type",            ".bin"),
         ]
     )
@@ -127,21 +130,47 @@ class TestProcessControlledRequest:
             )
 
     # ------------------------------------------------------------------
-    # result.file_paths が空のとき RuntimeError
+    # 中間 result.file_paths が空でも DataContainer.data で後続へ渡せる
     # ------------------------------------------------------------------
     @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
-    def test_step_returns_no_file_paths_raises_runtime_error(self, mock_execute_step):
-        """execute_step が file_paths 空のコンテナを返したとき RuntimeError"""
-        empty_container = MagicMock(spec=DataContainer)
-        empty_container.status = DataContainerStatus.SUCCESS
-        empty_container.file_paths = []
-        mock_execute_step.return_value = empty_container
+    def test_data_only_intermediate_container_is_passed_to_next_step(
+        self, mock_execute_step
+    ):
+        """file_pathsなしの中間DataContainerを後続ステップへ渡せる"""
+        data_only_container = DataContainer(status=DataContainerStatus.SUCCESS)
+        data_only_container.data = pd.DataFrame({"in_memory": ["value"]})
+        final_container = _make_ok_container(file_path="/mock/final.csv")
+        mock_execute_step.side_effect = [data_only_container, final_container]
 
-        with pytest.raises(RuntimeError, match="returned no file paths"):
+        result = process_controlled_request(
+            body_bytes=b"data",
+            payload=_make_payload(
+                steps=[
+                    {"plugin": "data_producer", "params": {}},
+                    {"plugin": "data_consumer", "params": {}},
+                ]
+            ),
+            headers={},
+        )
+
+        second_inputs = mock_execute_step.call_args_list[1].kwargs["inputs"]
+        assert second_inputs["input_data"] is data_only_container
+        assert result["primary_file"] == "/mock/final.csv"
+
+    @patch("api.services.proxy_controlled_service.StepExecutor.execute_step")
+    def test_final_result_still_requires_file_path(self, mock_execute_step):
+        """既存レスポンスIFのprimary_fileを維持するため最終結果にはパスが必要"""
+        final_container = DataContainer(status=DataContainerStatus.SUCCESS)
+        final_container.data = pd.DataFrame({"in_memory": ["value"]})
+        mock_execute_step.return_value = final_container
+
+        with pytest.raises(RuntimeError, match="Final container has no file paths"):
             process_controlled_request(
                 body_bytes=b"data",
-                payload=_make_payload(steps=[{"plugin": "plugin1", "params": {}}]),
-                headers={}
+                payload=_make_payload(
+                    steps=[{"plugin": "data_producer", "params": {}}]
+                ),
+                headers={},
             )
 
     # ------------------------------------------------------------------

@@ -2,10 +2,16 @@ import io
 import os
 import shutil
 import pandas as pd
+import requests
 from typing import Any, Dict, List, Optional, Union
 
 from core.data_container.formats import SupportedFormats
-from .storage_path_utils import normalize_path, is_remote_path, is_local_path, is_memory_path
+from .storage_path_utils import (
+    get_scheme,
+    normalize_path,
+    is_remote_path,
+    is_memory_path,
+)
 from .storage_backends import LocalStorageBackend, S3StorageBackend, MemoryStorageBackend
 from utils.logger import setup_logger
 
@@ -24,16 +30,28 @@ class StorageAdapter:
     """
 
     def __init__(self):
-        self._local   = LocalStorageBackend()
-        self._s3      = S3StorageBackend()
-        self._memory  = MemoryStorageBackend()
+        self._local = LocalStorageBackend()
+        self._s3 = S3StorageBackend()
+        self._memory = MemoryStorageBackend()
 
     def _get_backend(self, path: str):
         if is_memory_path(path):
             return self._memory
-        if is_remote_path(path):
+        scheme = get_scheme(path)
+        if scheme == "s3":
             return self._s3
+        if scheme in {"http", "https"}:
+            raise ValueError(
+                f"HTTP storage path '{path}' is read-only and does not support "
+                "this storage operation."
+            )
         return self._local
+
+    @staticmethod
+    def _read_http_bytes(path: str) -> bytes:
+        response = requests.get(path, timeout=60)
+        response.raise_for_status()
+        return response.content
 
     def _normalize(self, path: str) -> str:
         """memory:// と s3:// はそのまま、ローカルパスのみ正規化する"""
@@ -74,7 +92,9 @@ class StorageAdapter:
                 return pd.read_parquet(normalized, storage_options=options, **read_opts)
             elif file_format == SupportedFormats.EXCEL:
                 return pd.read_excel(normalized, storage_options=options, **read_opts)
-            elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            elif file_format == SupportedFormats.JSON:
+                return pd.read_json(normalized, storage_options=options, **read_opts)
+            elif file_format == SupportedFormats.JSONL:
                 return pd.read_json(normalized, lines=True, storage_options=options, **read_opts)
             else:
                 raise ValueError(f"Reading DataFrame from format '{file_format.value}' is not supported.")
@@ -111,7 +131,14 @@ class StorageAdapter:
                 df.to_parquet(normalized, index=False, storage_options=options, **write_opts)
             elif file_format == SupportedFormats.EXCEL:
                 df.to_excel(normalized, index=False, storage_options=options, **write_opts)
-            elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+            elif file_format == SupportedFormats.JSON:
+                df.to_json(
+                    normalized,
+                    orient='records',
+                    storage_options=options,
+                    **write_opts,
+                )
+            elif file_format == SupportedFormats.JSONL:
                 df.to_json(normalized, orient='records', lines=True, storage_options=options, **write_opts)
             else:
                 raise ValueError(f"Writing DataFrame to format '{file_format.value}' is not supported.")
@@ -125,7 +152,9 @@ class StorageAdapter:
             return pd.read_csv(buf, **read_opts)
         elif file_format == SupportedFormats.PARQUET:
             return pd.read_parquet(buf, **read_opts)
-        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+        elif file_format == SupportedFormats.JSON:
+            return pd.read_json(buf, **read_opts)
+        elif file_format == SupportedFormats.JSONL:
             return pd.read_json(buf, lines=True, **read_opts)
         else:
             raise ValueError(f"Reading DataFrame from memory format '{file_format.value}' is not supported.")
@@ -136,7 +165,9 @@ class StorageAdapter:
             df.to_csv(buf, index=False, **write_opts)
         elif file_format == SupportedFormats.PARQUET:
             df.to_parquet(buf, index=False, **write_opts)
-        elif file_format in [SupportedFormats.JSON, SupportedFormats.JSONL]:
+        elif file_format == SupportedFormats.JSON:
+            df.to_json(buf, orient='records', **write_opts)
+        elif file_format == SupportedFormats.JSONL:
             df.to_json(buf, orient='records', lines=True, **write_opts)
         else:
             raise ValueError(f"Writing DataFrame to memory format '{file_format.value}' is not supported.")
@@ -169,6 +200,8 @@ class StorageAdapter:
     def read_text(self, path: str, encoding: str = 'utf-8') -> str:
         logger.info(f"Reading text from: {path}")
         try:
+            if get_scheme(path) in {"http", "https"}:
+                return self._read_http_bytes(path).decode(encoding)
             normalized = self._normalize(path)
             return self._get_backend(path).read_text(normalized, encoding)
         except Exception as e:
@@ -187,6 +220,8 @@ class StorageAdapter:
     def read_bytes(self, path: str) -> bytes:
         logger.info(f"Reading bytes from: {path}")
         try:
+            if get_scheme(path) in {"http", "https"}:
+                return self._read_http_bytes(path)
             normalized = self._normalize(path)
             return self._get_backend(path).read_bytes(normalized)
         except Exception as e:
@@ -209,7 +244,11 @@ class StorageAdapter:
         if parent:
             os.makedirs(parent, exist_ok=True)
 
-        if is_remote_path(remote_path):
+        scheme = get_scheme(remote_path)
+        if scheme in {"http", "https"}:
+            self._local.write_bytes(local_path, self._read_http_bytes(remote_path))
+            logger.info("Download from HTTP complete.")
+        elif scheme == "s3":
             normalized = self._normalize(remote_path)
             self._s3.download_file(normalized, local_path)
         else:
@@ -225,7 +264,13 @@ class StorageAdapter:
         if not os.path.isfile(local_path):
             raise FileNotFoundError(f"Local file to upload not found: {local_path}")
 
-        if is_remote_path(remote_path):
+        scheme = get_scheme(remote_path)
+        if scheme in {"http", "https"}:
+            raise ValueError(
+                f"HTTP storage path '{remote_path}' is read-only and does not "
+                "support uploads."
+            )
+        if scheme == "s3":
             normalized = self._normalize(remote_path)
             if normalized.endswith("/"):
                 normalized = normalized + os.path.basename(local_path)

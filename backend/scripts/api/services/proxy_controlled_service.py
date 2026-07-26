@@ -3,8 +3,9 @@ import tempfile
 import copy
 from typing import Dict, Any, List
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
+from core.pipeline.result import ensure_successful_result
 
 # MIMEタイプ → 拡張子マッピング
 MIME_SUFFIX_MAP = {
@@ -15,9 +16,11 @@ MIME_SUFFIX_MAP = {
     "text/plain": ".txt"
 }
 
+
 def get_suffix_from_headers(headers: Dict[str, Any]) -> str:
-    content_type = headers.get("content-type", "").lower()
+    content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
     return MIME_SUFFIX_MAP.get(content_type, ".bin")
+
 
 def process_controlled_request(body_bytes: bytes, payload: Dict[str, Any], headers: Dict[str, Any]) -> Dict[str, Any]:
     steps = payload.get("steps", [])
@@ -54,15 +57,7 @@ def process_controlled_request(body_bytes: bytes, payload: Dict[str, Any], heade
             current_input = container_stack[-1]
             result = executor.execute_step(step_config, inputs={"input_data": current_input})
 
-            if result is None:
-                raise RuntimeError(f"Step '{plugin_name}' returned no result.")
-
-            if result.status == DataContainerStatus.ERROR:
-                errors = ", ".join(result.errors) if result.errors else "unknown error"
-                raise RuntimeError(f"Step '{plugin_name}' failed: {errors}")
-
-            if not result.file_paths:
-                raise RuntimeError(f"Step '{plugin_name}' returned no file paths.")
+            ensure_successful_result(result, plugin_name)
 
             container_stack.append(result)
 

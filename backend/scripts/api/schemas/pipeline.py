@@ -1,5 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Dict, Any
+
+from core.pipeline.validation import validate_pipeline_graph
+
 
 class PipelineNode(BaseModel):
     """
@@ -22,6 +25,7 @@ class PipelineNode(BaseModel):
         examples=[{"source_path": "data/input/source.csv"}]
     )
 
+
 class PipelineEdge(BaseModel):
     """
     Defines the structure for a directed edge (a connection) between two nodes in the DAG.
@@ -37,6 +41,7 @@ class PipelineEdge(BaseModel):
         description="The 'id' of the target node to which the edge connects.",
         examples=["node-validator-quality-1"]
     )
+
 
 class PipelineDefinition(BaseModel):
     """
@@ -56,3 +61,8 @@ class PipelineDefinition(BaseModel):
         ...,
         description="A list of all the edges (dependencies) connecting the nodes."
     )
+
+    @model_validator(mode="after")
+    def validate_graph(self):
+        validate_pipeline_graph(self.nodes, self.edges)
+        return self

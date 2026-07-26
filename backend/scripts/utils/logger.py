@@ -1,5 +1,6 @@
 import logging
 import sys
+from typing import Any
 
 LOG_FORMAT = '[%(inputdataname)s][%(levelname)s][%(filename)s][%(funcName)s:%(lineno)d]\t%(message)s'
 LOG_NAME2LEVEL = {
@@ -12,6 +13,37 @@ LOG_NAME2LEVEL = {
     "FATAL":    logging.FATAL,
     "CRITICAL": logging.CRITICAL,
 }
+
+REDACTED_VALUE = "***REDACTED***"
+_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "private_key",
+)
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    """Return a log-safe copy of nested configuration data."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower().replace("-", "_")
+            if any(part in normalized_key for part in _SENSITIVE_KEY_PARTS):
+                redacted[key] = REDACTED_VALUE
+            else:
+                redacted[key] = redact_sensitive_data(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item) for item in value)
+    return value
 
 
 class CustomFormatter(logging.Formatter):

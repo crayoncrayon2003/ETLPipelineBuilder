@@ -81,6 +81,11 @@ class DataContainer:
 
     def add_file_path(self, path: Union[str, Path]) -> None:
         self.file_paths.append(str(path))
+        # `.data` が file_paths 未設定の状態で先に参照されると、None が
+        # 読み込み済みとしてキャッシュされる。その後パスが追加された場合は、
+        # 明示的な data が存在しないときに限り遅延読み込みを再度有効にする。
+        if self._data is None:
+            self._data_loaded = False
 
     def get_file_paths(self) -> List[str]:
         return self.file_paths

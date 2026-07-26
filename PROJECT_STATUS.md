@@ -1,7 +1,28 @@
 # ETLPipelineBuilder プロジェクト状態サマリー
 
 作成日: 2026-03-05  
+最終更新日: 2026-07-27
 目的: セッションがクリアされたときに、新しいセッションのClaudeがプロジェクトの最新状態を正確に把握できるようにする。
+
+---
+
+## 0. フレームワークの対象範囲
+
+この文書で「フレームワーク」と呼ぶ範囲は `backend/scripts/` 配下。ただし、
+`backend/scripts/plugins/` はフレームワーク利用者が実装するサンプルプラグインのため、
+プラグイン固有の処理はフレームワークのバグ修正対象外とする。
+
+`backend/` 直下の `run_pipeline_*.py` や `call_*_service.py` は、ライブラリやAPIの
+利用例となるmain関数相当のサンプルであり、フレームワーク本体には含めない。
+ただし、公開インターフェースの互換性や利用方法を確認する際の参考実装として扱う。
+
+フレームワークが維持する主要な実行インターフェースは次の3種類。
+
+1. ライブラリ呼び出し: 辞書型コンフィグを `StepExecutor` に渡して実行
+2. コンフィグファイル実行: JSONファイルからパイプライン定義を読み込んで実行
+3. API実行: REST APIのリクエストBodyまたはクエリでコンフィグを受け取って実行
+
+プラグインIF（`BasePlugin`）と上記3種類の実行IFは、互換性を維持する。
 
 ---
 
@@ -16,13 +37,19 @@ HTTPリクエストで受け取ったデータを、プラグインの組み合�
 ### 設計意図
 
 **プラグイン設計**
-新しいデータソース・変換・送信先を追加するとき、既存コードを変更せずプラグインを1ファイル追加するだけで対応できる。pluggy フックシステムを使い、起動時に `plugins/` 以下を自動スキャンして登録する。
+新しいデータソース・変換・送信先を追加するとき、既存コードを変更せずプラグインを1ファイル追加するだけで対応できる。起動時に `plugins/` 以下を自動スキャンして登録する。
+
+実際の実行時登録は、`FrameworkManager` が `BasePlugin` のサブクラスを走査し、
+プラグイン名とクラスの対応を独自キャッシュに保存する方式である。pluggyの
+hookspecは定義されているが、現在の実行ディスパッチには使用していない。
 
 **ストレージ抽象化**
 プラグインはパスを指定するだけで、ローカルFS・S3・メモリのどこに読み書きするかを意識しない。`storage_adapter.read_df("memory://run1/step1.csv")` のように全スキームで同一IFを使う。
 
 **実行方式の多様性**
-GUI・REST API・設定ファイル・スクリプトの4方式をサポートし、用途に応じて使い分ける。GUIで組んだパイプラインも、JSONファイルで定義したパイプラインも、同じプラグイン・同じコアで動く。
+ライブラリ呼び出し・コンフィグファイル実行・API実行の3つの公開IFをサポートする。
+GUIはAPI実行IFを利用するクライアントであり、独立したフレームワークIFには数えない。
+どの実行方法でも同じプラグインIFとコアを使用する。
 
 **責務の明確な分離**
 - データ処理 → プラグイン
@@ -261,11 +288,19 @@ return os.path.normpath(os.path.join(project_root, normalized_str))
 # pipelines.py の __file__ から3階層上で計算
 ```
 
-上記3点（シンクノード判定・循環検知・上流エッジ1本まで）は `pipeline_service.py`・`proxy_configured_service.py`・`run_pipeline_with_parameter_file1.py`・`run_pipeline_with_parameter_file2.py` の4ファイルで同一のロジックとして実装されている（DAGをエッジで辿る処理がこの4ファイルに重複実装されているため、変更する際は4ファイル全てを揃える必要がある）。
+パイプライン定義の共通バリデーションは
+`core/pipeline/validation.py::validate_pipeline_graph()` に集約されている。
+APIスキーマの `PipelineDefinition` 生成時に、空ノード、重複ノードID、不明なノードを
+参照するエッジ、複数上流入力、循環を実行前に検出する。
+
+`backend/` 直下のmain関数相当サンプルはフレームワーク外であり、独自の実行制御を持つ。
 
 **proxy_controlled_service.py の設計:**
 - 各ステップの `params` は呼び出し側が全て明示する（自動注入なし）
-- エラーチェック3段階: `result is None` → `status == ERROR` → `file_paths が空`
+- `ensure_successful_result()` で `None`、`PENDING`、失敗ステータスを共通判定する
+- 中間結果は `file_paths` が空でもよい。`DataContainer.data` だけを後続プラグインへ
+  渡す実装を許可する
+- APIレスポンスの `primary_file` を維持するため、最終結果には `file_paths` が必要
 
 ---
 
@@ -275,7 +310,7 @@ return os.path.normpath(os.path.join(project_root, normalized_str))
 
 ```python
 class DataContainerStatus(Enum):
-    SUCCESS, ERROR, SKIPPED, VALIDATION_FAILED
+    PENDING, SUCCESS, ERROR, SKIPPED, VALIDATION_FAILED, TRANSFORMED, LOADED
 
 class DataContainer:
     data: Optional[pd.DataFrame] # メモリ経由のデータ受け渡し領域（遅延読み込みプロパティ）
@@ -290,6 +325,8 @@ class DataContainer:
 `data` は遅延読み込みプロパティになっている:
 - 上流プラグインが `container.data = df` と明示的に設定していれば、そのDataFrameがそのまま返る（ファイルI/O無し）。
 - 未設定の場合、`file_paths[0]` から `storage_adapter.read_df()` で1回だけ読み込みキャッシュする（ファイルパス経由の出力しかないプラグインの結果にも、下流プラグインが `.data` でアクセスできるようにするフォールバック）。
+- `file_paths` が空の状態で先に `.data` が参照され、その後 `add_file_path()` された
+  場合は、キャッシュ済みの `None` を確定値にせず遅延読み込みを再度有効にする。
 - 読み込みに失敗した場合（非表形式フォーマット・ファイル削除済み等）は例外にせず `None` を返す。
 - `__repr__` は遅延読み込みを誘発しないよう内部状態を直接見る。`print(container)` や単純なログ出力だけでファイルI/Oが走ることはない。
 
@@ -309,7 +346,9 @@ step_executor.execute_step(step_config, inputs={"input_data": prev_container})
 - 起動時に `plugins/` 以下を再帰的にスキャン
 - `BasePlugin` のサブクラスをキャッシュし `get_plugin_name()` で名前引き
 - `inputs` が空のときは空の `DataContainer` を渡す
-- `inputs` があるときは `next(iter(inputs.values()))` で最初の値を `input_data` として渡す
+- `inputs` が1件のときはその値を `input_data` として渡す
+- `inputs` が2件以上のときは、単一入力のプラグインIFでデータを黙って捨てないよう
+  `ValueError` にする
 
 #### BasePlugin（プラグインの基底クラス）
 
@@ -400,6 +439,13 @@ def ensure_dir_exists(path):
 | `http://` / `https://` | そのまま |
 | `memory://` | そのまま |
 
+HTTP/HTTPSは読み取り専用として扱う。`read_text()`、`read_bytes()`、
+`read_df()` および `download_remote_file()` で読み込めるが、書き込み系操作は
+HTTPをS3として扱わず、未対応であることを明示するエラーを返す。
+
+JSONとJSONLは異なる形式として扱う。`.json` はJSON配列、`.jsonl` は1行1レコードで
+読み書きし、拡張子に応じて `lines` オプションを切り替える。
+
 ---
 
 ### 4.6 プラグイン一覧
@@ -430,23 +476,30 @@ def ensure_dir_exists(path):
 
 ---
 
-## 5. 実行方式ごとの使い分け
+## 5. 3つの公開実行パターン
 
-### 方式1: GUIから実行（pipeline_service）
+### 方式1: ライブラリ呼び出し
 
-フロントエンドでパイプラインを組み「実行」ボタンを押す。Prefect でタスクを並列実行。パイプライン定義はHTTPリクエストのボディで渡す。
+APIサーバーを経由せず、辞書型の `step_config` を `StepExecutor.execute_step()` に
+渡して実行する。`backend/run_pipeline_directly*.py` は利用例であり、
+フレームワーク本体ではない。
 
-### 方式2: JSON設定ファイルから実行（proxy_configured_service）
+### 方式2: コンフィグファイル実行（proxy_configured_service）
 
 `configured_pipeline.json` にパイプラインを定義し `call_configured_service.py` でHTTPリクエストを送る。固定パイプラインの継続運用に向く。
 
-### 方式3: 動的ステップ実行（proxy_controlled_service）
+コンフィグファイルはライブラリ内の固定ディレクトリから読み込む。設定内の相対パスを
+実行用の絶対パスに正規化する処理は意図した仕様である。
+
+### 方式3: API実行
+
+- `pipeline_service`: REST APIのリクエストBodyでDAG定義を受け取り、Prefectで実行
+- `proxy_controlled_service`: リクエストで動的なステップリストを受け取り、同期実行
+- `proxy_configured_service`: 指定された固定コンフィグファイルとリクエストBodyを使って実行
 
 `call_controlled_service.py` でステップリストをHTTPリクエストで渡す。プログラムから動的にパイプラインを制御したい場合に使う。各ステップの `params` は呼び出し側が全て明示する。
 
-### 方式4: スクリプトから直接実行（run_pipeline_directly*.py）
-
-APIサーバーを経由せず `StepExecutor` を直接呼び出す。開発・デバッグ用途。`memory://` パスを使えばファイルシステムを汚さず実行できる。
+`memory://` パスを使えばファイルシステムを使わずに中間ファイルを受け渡せる。
 
 ```python
 # run_pipeline_directly5.py の構成例
@@ -503,17 +556,36 @@ finally:
 
 11. **プラグインは例外を外に伝搬しない** — `BasePlugin.execute()` は例外を `try/except` で受け止め、`status=ERROR` の `DataContainer` を返す。呼び出し側（サービス層）は `result.status == ERROR` を確認してパイプラインを停止するかどうかを判断する。
 
-12. **サービス層のエラーチェックは3段階** — `proxy_controlled_service` および同様のサービス層では以下の順で確認する: `result is None` → `result.status == ERROR` → `result.file_paths が空`。
+11a. **コンフィグをログへ出す前に機密値をマスクする** —
+`password`、`secret`、`token`、`authorization` などを含むキーは、
+ネストした辞書・リストも含めて `***REDACTED***` に置き換える。
+
+12. **サービス層の結果判定を共通化する** —
+`core/pipeline/result.py::ensure_successful_result()` は `result is None`、
+`status == PENDING`、`ERROR`、`SKIPPED`、`VALIDATION_FAILED` を失敗として扱う。
+`TRANSFORMED`、`LOADED`、`SUCCESS` は完了結果として扱う。
+中間ステップの `file_paths` は必須ではなく、`DataContainer.data` だけの結果も許可する。
+外部レスポンスとして `primary_file` を返すサービスでは、最終結果に限り
+`file_paths` を確認する。
 
 ### パイプライン実行
 
-13. **シンクノードの判定は `source_node_ids`** — `source_node_ids`（どのエッジの出発点にもなっていないノード）で末端ノードを判定する。`target_node_ids` では逆になるため使わない。`pipeline_service.py`・`proxy_configured_service.py`・`run_pipeline_with_parameter_file1/2.py` の4ファイルで同じロジックを使う。
+13. **シンクノードの判定は `source_node_ids`** —
+`source_node_ids`（どのエッジの出発点にもなっていないノード）で末端ノードを判定する。
+`target_node_ids` では逆になるため使わない。フレームワーク内のDAGサービスである
+`pipeline_service.py` と `proxy_configured_service.py` がこの判定を使用する。
+`backend/` 直下のmain関数相当サンプルはフレームワーク外である。
 
-13a. **`sink_node_ids` が空ならエラーにする** — 循環のみで構成され終着ノードが存在しないパイプラインは、`ValueError("No sink node found. Pipeline may have a circular dependency.")` を送出する。4つの実行エンジン全てで同じ挙動。
+13a. **循環は共通バリデーションで拒否する** —
+`validate_pipeline_graph()` が循環を実行前に検出する。DAGサービス側にも
+`sink_node_ids` が空の場合の防御的なエラーチェックを残す。
 
 13b. **ノードへの上流エッジは1本まで** — `BasePlugin.run()` は単一の `input_data` しか受け取れない設計のため、あるノードに2本以上の上流エッジがあると、後から解決された方でもう一方が黙って上書きされて消える。これを防ぐため、2本以上の上流エッジを検出した時点で `ValueError` を送出する。複数の入力を1つのノードに合流させたい場合は、この設計自体（`BasePlugin`/`FrameworkManager` が単一入力しか扱えない点）を変更する必要があり、現状は未対応。
 
-13c. **エッジで繋がっていない独立ノードの実行順序は宣言順** — 明示的なエッジによる依存関係がないノード同士は、`pipeline_def.nodes`（JSON配列）の宣言順に実行される。これが唯一の順序保証であり、順序を制御したい場合はエッジで依存関係を明示するか、宣言順を意図通りに並べる。
+13c. **独立ノードの順序保証は実行エンジンごとに異なる** —
+同期実行の `proxy_configured_service` は `pipeline_def.nodes` の宣言順に処理を開始する。
+Prefectの `.submit()` を使う `pipeline_service` では独立ノードが並列実行されるため、
+開始順・完了順は保証しない。順序が必要な処理はエッジで依存関係を明示する。
 
 14. **`receive_http` プラグインは `configured_service` 専用** — `proxy_configured_service` の `initial_container`（リクエストボディの一時ファイル）を永続パスにコピーする役割を担う。`proxy_controlled_service` では使わない。
 
@@ -545,7 +617,16 @@ finally:
 
 ---
 
-## 7. サーバー起動・テスト実行
+## 7. 保留中の設計判断
+
+`StorageAdapter.rename(old, new)` で異なるストレージスキーム間を指定した場合の扱いは
+未確定。現在は移動元のバックエンドで処理されるため、呼び出し側は同一スキーム内の
+renameに限定して使用する。異なるスキーム間を禁止するか、コピー後削除として
+フレームワークで対応するかは別途決定する。今回の修正ではIF・挙動を変更していない。
+
+---
+
+## 8. サーバー起動・テスト実行
 
 ### バックエンド起動
 
@@ -565,7 +646,15 @@ npm start
 ### テスト実行
 
 ```bash
-cd /home/user/HOME/sample/ETLPipelineBuilder/backend/test
-python run_all_tests.py
-# 768 passed（2026-07-25時点）
+cd /home/user/HOME/sample/ETLPipelineBuilder/backend
+PYTHONPATH=.:scripts env/bin/pytest -q \
+  test/test_core \
+  test/test_api/test_services \
+  test/test_api/test_schemas \
+  test/test_utils
+# 723 passed（2026-07-27時点）
 ```
+
+上記はフレームワークのコア、サービス、スキーマ、ユーティリティのテスト結果。
+APIルーターのTestClient統合テストは、現在のローカル環境でTestClient自体が停止する
+問題があるため、この件数には含めていない。

@@ -3,7 +3,14 @@ import io
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
-from scripts.utils.logger import AppLogger, setup_logger, CustomFormatter, LOG_NAME2LEVEL
+from scripts.utils.logger import (
+    AppLogger,
+    CustomFormatter,
+    LOG_NAME2LEVEL,
+    REDACTED_VALUE,
+    redact_sensitive_data,
+    setup_logger,
+)
 
 
 # ======================================================================
@@ -40,6 +47,28 @@ class TestCustomFormatter:
         formatter.format(r2)
         assert r1.inputdataname == "x"
         assert r2.inputdataname == "x"
+
+
+class TestRedactSensitiveData:
+
+    def test_redacts_nested_sensitive_values_without_mutating_input(self):
+        original = {
+            "url": "https://example.test",
+            "password": "plain-text-password",
+            "nested": {
+                "api_token": "token-value",
+                "output_path": "/tmp/output.csv",
+            },
+            "items": [{"private_key": "key-value"}],
+        }
+
+        result = redact_sensitive_data(original)
+
+        assert result["password"] == REDACTED_VALUE
+        assert result["nested"]["api_token"] == REDACTED_VALUE
+        assert result["items"][0]["private_key"] == REDACTED_VALUE
+        assert result["nested"]["output_path"] == "/tmp/output.csv"
+        assert original["password"] == "plain-text-password"
 
 
 # ======================================================================

@@ -90,13 +90,16 @@ class FrameworkManager:
         plugin_class = self._plugin_class_cache[plugin_name]
         instance = plugin_class(params=params)
 
-        # 現在の設計では StepExecutor が inputs の file_paths を
-        # resolved_params に文字列として展開済みのため、plugin は
-        # params["input_path"] 等でファイルパスを取得する。
         # input_data は「前ステップの DataContainer オブジェクト」として渡す。
+        # params のパスは呼び出し側が明示し、ここでは補完しない。
         #
         # - inputs が空       → 空の DataContainer を渡す (初回ステップ等)
         # - inputs に値あり   → 最初の DataContainer をプライマリ入力として渡す
+        if len(inputs) > 1:
+            raise ValueError(
+                "The plugin interface supports only one upstream input_data, "
+                f"but {len(inputs)} inputs were provided: {list(inputs.keys())}"
+            )
         if inputs:
             input_data = next(iter(inputs.values()))
         else:

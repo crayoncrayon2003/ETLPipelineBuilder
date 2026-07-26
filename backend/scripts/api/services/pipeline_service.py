@@ -7,9 +7,11 @@ from prefect import flow, task
 
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
 from core.data_container.container import DataContainer
+from core.infrastructure.storage_path_utils import get_scheme, normalize_path
 from core.pipeline.step_executor import StepExecutor
+from core.pipeline.result import ensure_successful_result
 
-from utils.logger import setup_logger
+from utils.logger import redact_sensitive_data, setup_logger
 
 logger = setup_logger(__name__)
 
@@ -25,13 +27,20 @@ def execute_step_api_task(
     inputs = inputs or {}
     step_executor = StepExecutor()
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
-    logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
-    return step_executor.execute_step(step_config, inputs)
+    logger.info(
+        f"execute_step_api_task: '{step_name}' using plugin: '{plugin_name}' "
+        f"params: '{redact_sensitive_data(params)}'"
+    )
+    result = step_executor.execute_step(step_config, inputs)
+    return ensure_successful_result(result, step_name)
 
 
 def _normalize_path(path_str: str, project_root: str) -> str:
     """
-    Normalizes a path string from various formats to a valid WSL/Linux Path object.
+    Backward-compatible wrapper around the framework path normalizer.
+
+    WSL UNC paths and Windows drive paths keep the API's established conversion
+    behavior. URI schemes such as s3:// and memory:// are delegated unchanged.
     """
     normalized_str = path_str.replace('\\', '/')
     wsl_match = re.match(r"^//wsl(\$|\.localhost)/[^/]+(/.*)", normalized_str)
@@ -44,11 +53,10 @@ def _normalize_path(path_str: str, project_root: str) -> str:
         drive = win_match.group(1).lower()
         path_remainder = normalized_str[len(win_match.group(0)):]
         return f"/mnt/{drive}/{path_remainder}"
-    if not os.path.isabs(normalized_str):
-        # return os.path.join(project_root, normalized_str)
-        return os.path.normpath(os.path.join(project_root, normalized_str))
-    # return normalized_str
-    return os.path.normpath(normalized_str)
+    normalized_path = normalize_path(normalized_str, project_root)
+    if get_scheme(normalized_str):
+        return normalized_path
+    return os.path.normpath(normalized_path)
 
 
 def _submit_node_task(

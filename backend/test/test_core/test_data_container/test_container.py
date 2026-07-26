@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 from pathlib import Path
+from unittest.mock import patch
 from core.data_container.container import DataContainer, DataContainerStatus
 
 
@@ -78,6 +79,36 @@ class TestDataContainer:
         dc = DataContainer()
         with pytest.raises(ValueError):
             dc.get_primary_file_path()
+
+    def test_add_file_path_reenables_lazy_load_after_cached_none(self):
+        """パス追加前にキャッシュされたNoneは、パス追加後に再評価される"""
+        dc = DataContainer()
+        assert dc.data is None
+
+        expected = pd.DataFrame({"value": [1, 2]})
+        dc.add_file_path("later.csv")
+
+        with patch.object(
+            dc,
+            "_load_data_from_file_paths",
+            return_value=expected,
+        ) as lazy_load:
+            result = dc.data
+
+        lazy_load.assert_called_once_with()
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_add_file_path_does_not_replace_explicit_data(self):
+        """明示設定されたdataは、パス追加後もそのまま保持される"""
+        expected = pd.DataFrame({"value": [1, 2]})
+        dc = DataContainer(data=expected)
+        dc.add_file_path("fallback.csv")
+
+        with patch.object(dc, "_load_data_from_file_paths") as lazy_load:
+            result = dc.data
+
+        lazy_load.assert_not_called()
+        assert result is expected
 
     # ======================================================================
     # set_status / get_status

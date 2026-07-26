@@ -3,11 +3,13 @@ import tempfile
 import json
 from typing import Dict, Any, Optional
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
+from core.pipeline.result import ensure_successful_result
 from core.infrastructure import storage_adapter
 from core.infrastructure.storage_path_utils import normalize_path
-from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
+from api.schemas.pipeline import PipelineDefinition
+
 
 def process_configured_request(
     body_bytes: bytes,
@@ -17,10 +19,9 @@ def process_configured_request(
 ) -> Dict[str, Any]:
     config_text = storage_adapter.read_text(config_path)
     config_data = json.loads(config_text)
-    pipeline_def = PipelineDefinition(**config_data)
-
-    if not pipeline_def.nodes:
+    if not config_data.get("nodes"):
         raise ValueError("pipeline_def.nodes is empty. At least one node is required.")
+    pipeline_def = PipelineDefinition(**config_data)
 
     fd, temp_path = tempfile.mkstemp(suffix=".dat")
     os.close(fd)
@@ -69,6 +70,7 @@ def process_configured_request(
                 {"name": node_def.id, "plugin": node_def.plugin, "params": params},
                 inputs=inputs
             )
+            ensure_successful_result(result, node_def.id)
             node_results_cache[node_id] = result
             return result
 
@@ -83,13 +85,12 @@ def process_configured_request(
 
         final_container = None
         for sink_node_id in sink_node_ids:
-            final_container = _submit_node(sink_node_id)
+            sink_result = _submit_node(sink_node_id)
+            ensure_successful_result(sink_result, sink_node_id)
+            final_container = sink_result
 
         if final_container is None:
             raise RuntimeError("Pipeline execution returned no result.")
-        if final_container.status == DataContainerStatus.ERROR:
-            errors = ", ".join(final_container.errors) if final_container.errors else "unknown error"
-            raise RuntimeError(f"Pipeline execution failed: {errors}")
 
         return {
             "status": "ok",

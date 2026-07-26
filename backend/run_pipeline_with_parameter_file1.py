@@ -10,21 +10,23 @@ if scripts_path not in sys.path:
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-from utils.logger import AppLogger, setup_logger
+from utils.logger import AppLogger, redact_sensitive_data, setup_logger
 
 applogger = AppLogger(inputdataname="MainModule")
 applogger.init_logger("INFO")
 logger = setup_logger(__name__)
 
-from core.data_container.container import DataContainer, DataContainerStatus
+from core.data_container.container import DataContainer
 from core.pipeline.step_executor import StepExecutor
+from core.pipeline.result import ensure_successful_result
 from core.infrastructure.storage_adapter import storage_adapter
-from core.infrastructure.storage_path_utils import normalize_path, is_remote_path, is_local_path
+from core.infrastructure.storage_path_utils import normalize_path, is_remote_path
 
 from api.schemas.pipeline import PipelineDefinition, PipelineNode, PipelineEdge
 
 
 _node_results_cache: Dict[str, Any] = {}
+
 
 def execute_step_batch_task(
     step_name: str, plugin_name: str, params: Dict[str, Any], inputs: Dict[str, Optional[DataContainer]] = None
@@ -32,12 +34,19 @@ def execute_step_batch_task(
     inputs = inputs or {}
     step_executor = StepExecutor()
     step_config = {"name": step_name, "plugin": plugin_name, "params": params}
-    logger.info(f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' params: '{params}'")
+    logger.info(
+        f"execute_step_batch_task: '{step_name}' using plugin: '{plugin_name}' "
+        f"params: '{redact_sensitive_data(params)}'"
+    )
     return step_executor.execute_step(step_config, inputs)
 
 
 def _submit_node_task_batch(
-    node_id: str, nodes_map: Dict[str, PipelineNode], edges: List[PipelineEdge], project_root_dir: str
+    node_id: str,
+    nodes_map: Dict[str, PipelineNode],
+    edges: List[PipelineEdge],
+    project_root_dir: str,
+    fail_stop: bool = True,
 ):
     if node_id in _node_results_cache:
         return _node_results_cache[node_id]
@@ -56,7 +65,13 @@ def _submit_node_task_batch(
 
     upstream_inputs = {}
     if incoming_edges:
-        source_result = _submit_node_task_batch(incoming_edges[0].source_node_id, nodes_map, edges, project_root_dir)
+        source_result = _submit_node_task_batch(
+            incoming_edges[0].source_node_id,
+            nodes_map,
+            edges,
+            project_root_dir,
+            fail_stop,
+        )
         upstream_inputs["input_data"] = source_result
     params = node_def.params.copy()
     for key, value in params.items():
@@ -66,10 +81,13 @@ def _submit_node_task_batch(
         step_name=node_def.id, plugin_name=node_def.plugin,
         params=params, inputs=upstream_inputs
     )
+    if fail_stop:
+        ensure_successful_result(result, node_def.id)
     _node_results_cache[node_id] = result
     return result
 
-def run_pipeline_from_file(config_file_path: str, fail_stop: bool=True):
+
+def run_pipeline_from_file(config_file_path: str, fail_stop: bool = True):
     """
     The main entry point for running a pipeline from a saved JSON file.
     Supports local and S3 paths.
@@ -82,7 +100,9 @@ def run_pipeline_from_file(config_file_path: str, fail_stop: bool=True):
     except Exception as e:
         logger.error(f"Failed to load pipeline definition file: {e}", exc_info=True)
         raise
-    logger.info(f"run_pipeline_from_file '{data}'")
+    logger.info(
+        f"run_pipeline_from_file '{redact_sensitive_data(data)}'"
+    )
     pipeline_def = PipelineDefinition(**data)
 
     logger.info(f"Starting batch pipeline run for: {pipeline_def.name}")
@@ -100,13 +120,16 @@ def run_pipeline_from_file(config_file_path: str, fail_stop: bool=True):
 
     try:
         for node_id in sink_node_ids:
-            ret = _submit_node_task_batch(node_id, nodes_map, pipeline_def.edges, project_root)
-            if fail_stop:
-                if ret.status in [DataContainerStatus.ERROR, DataContainerStatus.SKIPPED, DataContainerStatus.VALIDATION_FAILED]:
-                    raise RuntimeError(f"Node '{node_id}' execution failed.")
+            _submit_node_task_batch(
+                node_id,
+                nodes_map,
+                pipeline_def.edges,
+                project_root,
+                fail_stop,
+            )
     except Exception as e:
-        logger.error(f"Failed to load pipeline definition file: {e}", exc_info=True)
-        return
+        logger.error(f"Pipeline execution failed: {e}", exc_info=True)
+        raise
     logger.info(f"Pipeline '{pipeline_def.name}' completed.")
 
 
@@ -128,7 +151,7 @@ def main_local():
         config_file = os.path.join(os.getcwd(), config_file)
     config_file = os.path.abspath(config_file)
 
-    run_pipeline_from_file(config_file, fail_stop=False)
+    run_pipeline_from_file(config_file, fail_stop=True)
 
 
 def main_aws():
@@ -144,7 +167,7 @@ def main_aws():
     if unknown:
         logger.warning(f"[AWS CLI Args] Unknown arguments: {unknown}")
 
-    run_pipeline_from_file(args.config_file, fail_stop=False)
+    run_pipeline_from_file(args.config_file, fail_stop=True)
 
 
 def main():

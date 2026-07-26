@@ -111,6 +111,26 @@ class TestProcessConfiguredRequest:
             assert result["final_metadata"] == {"node": "2"}
             assert result["primary_file"] == container_node2.get_primary_file_path()
 
+    @patch("api.services.proxy_configured_service.storage_adapter.read_text")
+    @patch("api.services.proxy_configured_service.StepExecutor.execute_step")
+    def test_error_in_any_sink_fails_the_request(
+        self, mock_execute_step, mock_read_text
+    ):
+        """複数シンクのうち1つでも失敗したら成功扱いにしない"""
+        mock_read_text.return_value = _make_pipeline_json(
+            nodes=[
+                {"id": "sink1", "plugin": "plugin1", "params": {}},
+                {"id": "sink2", "plugin": "plugin2", "params": {}},
+            ]
+        )
+        mock_execute_step.side_effect = [
+            _make_error_container(errors=["sink1 failed"]),
+            _make_ok_container(),
+        ]
+
+        with pytest.raises(RuntimeError, match="sink1 failed"):
+            process_configured_request(**COMMON_ARGS)
+
     # ------------------------------------------------------------------
     # nodes が空のとき ValueError (早期バリデーション)
     # ------------------------------------------------------------------
